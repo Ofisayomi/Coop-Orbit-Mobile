@@ -34,6 +34,7 @@ const LoginScreen = () => {
 
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
+  const [canUseBiometrics, setCanUseBiometrics] = useState(false);
   const [loading, setLoading] = useState(false);
   
   // Track app lifecycle for 2FA handling
@@ -211,11 +212,28 @@ const LoginScreen = () => {
   const checkBiometrics = async () => {
     const compatible = await LocalAuthentication.hasHardwareAsync();
     const enrolled = await LocalAuthentication.isEnrolledAsync();
-    setIsBiometricSupported(compatible && enrolled);
+    const isSupported = compatible && enrolled;
+    setIsBiometricSupported(isSupported);
 
     const enabled = await SecureStore.getItemAsync('biometrics_enabled');
-    if (enabled === 'true') {
-      setIsBiometricEnabled(true);
+    const isEnabled = enabled === 'true';
+    setIsBiometricEnabled(isEnabled);
+
+    // Only show biometric button if it's supported, enabled by user,
+    // AND there is a valid or refreshable session.
+    if (isSupported && isEnabled) {
+      setLoading(true);
+      try {
+        const canRefresh = await trySilentRefresh();
+        setCanUseBiometrics(canRefresh);
+      } catch (err) {
+        console.error('Error checking silent refresh for biometric display:', err);
+        setCanUseBiometrics(false);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      setCanUseBiometrics(false);
     }
   };
 
@@ -450,6 +468,10 @@ const LoginScreen = () => {
     }
   };
 
+  const logoSource = colorScheme === 'dark' 
+    ? require('@/assets/images/splash.png') 
+    : require('@/assets/images/logo_light.png');
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -457,9 +479,9 @@ const LoginScreen = () => {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <View style={[styles.logoContainer, { backgroundColor: colorScheme === 'dark' ? '#FFFFFF' : 'transparent', borderRadius: 12 }]}>
+          <View style={[styles.logoContainer, { backgroundColor: 'transparent', borderRadius: 12 }]}>
             <Image
-              source={require('@/assets/images/splash.png')}
+              source={logoSource}
               style={styles.logo}
               resizeMode="contain"
             />
@@ -505,7 +527,7 @@ const LoginScreen = () => {
             <Text style={[styles.forgotPasswordText, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}>Forgot Password?</Text>
           </TouchableOpacity> */}
 
-          {isBiometricSupported && isBiometricEnabled && (
+          {canUseBiometrics && (
             <View style={styles.biometricSection}>
               <TouchableOpacity style={[styles.biometricCircle, { borderColor: colorScheme === 'dark' ? '#90CDF4' : '#173581', backgroundColor: colorScheme === 'dark' ? '#1A202C' : '#fff' }]} onPress={onFingerprintLogin}>
                 <Ionicons name="finger-print-outline" size={40} color={colorScheme === 'dark' ? '#90CDF4' : '#173581'} />
@@ -565,8 +587,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   logo: {
-    width: 200,
-    height: 150,
+    width: 300,
+    height: 200,
   },
   secureAccess: {
     fontSize: 14,

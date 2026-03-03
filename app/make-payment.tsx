@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import React, { useState } from 'react';
 import {
     Alert,
@@ -106,24 +106,27 @@ export default function SplitPaymentScreen() {
     const borderColor = isDark ? '#2D3748' : '#E2E8F0';
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={['top']}>
+        <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={['left', 'right', 'bottom']}>
+            <Stack.Screen 
+                options={{ 
+                    headerShown: true, 
+                    title: 'New Split Payment',
+                    headerTitleStyle: { fontWeight: 'bold' },
+                    headerTintColor: textPrimary,
+                    headerStyle: { backgroundColor: bg },
+                    headerShadowVisible: false
+                }} 
+            />
+            
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1 }}
             >
-                {/* Header */}
-                <View style={styles.header}>
-                    {/* <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color={textSecondary} />
-                        <Text style={[styles.backText, { color: textSecondary }]}>Back to Transfers</Text>
-                    </TouchableOpacity> */}
-                    <Text style={[styles.title, { color: textPrimary }]}>New Split Payment</Text>
-                    <Text style={[styles.subtitle, { color: textSecondary }]}>
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    {/* Topmost description */}
+                    <Text style={[styles.subtitle, { color: textSecondary, marginBottom: 20 }]}>
                         Distribute a single transfer across savings, loans, and contributions.
                     </Text>
-                </View>
-
-                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
                     <View style={[styles.card, { backgroundColor: cardBg }]}>
                         {/* Beneficiary Selection (Admin Only) */}

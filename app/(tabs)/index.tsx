@@ -4,12 +4,12 @@ import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
 import React, { useEffect, useState } from 'react';
 import {
-  Dimensions,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Dimensions,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -133,7 +133,7 @@ const DashboardScreen = () => {
             { name: 'Request Loan', icon: 'document-text-outline', lightBg: iconBgLight },
             { name: 'Make Payment', icon: 'card-outline', lightBg: iconBgMid, route: '/make-payment' },
             { name: 'Withdraw', icon: 'arrow-up-circle-outline', lightBg: iconBgLight },
-            { name: 'History', icon: 'time-outline', lightBg: iconBgMid },
+            { name: 'History', icon: 'time-outline', lightBg: iconBgMid, route: '/(tabs)/history' },
             { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
           ].map((action, index) => (
