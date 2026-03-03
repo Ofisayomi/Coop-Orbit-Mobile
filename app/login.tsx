@@ -45,6 +45,32 @@ const LoginScreen = () => {
   const oauthStateRef = useRef<string | null>(null);
   const codeVerifierRef = useRef<string | null>(null);
   const deeplinkSubscriptionRef = useRef<Linking.EventSubscription | null>(null);
+  const isProcessingCallbackRef = useRef(false);
+
+  // Warm up the browser to improve performance and session reliability
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      WebBrowser.warmUpAsync();
+    }
+    
+    // Add app state listener to handle backgrounding
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        console.log('App has come to the foreground!');
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      if (Platform.OS === 'android') {
+        WebBrowser.coolDownAsync();
+      }
+      subscription.remove();
+    };
+  }, []);
 
   // Keycloak configuration
   const keycloakUrl = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
@@ -60,23 +86,65 @@ const LoginScreen = () => {
     checkBiometrics();
   }, []);
 
-  // Helper function to generate PKCE code verifier and challenge
-  const generatePKCE = async () => {
-    // Generate a random string for code verifier (43-128 chars, base64url)
-    const random1 = Math.random().toString(36).substring(2);
-    const random2 = Date.now().toString(36);
-    const randomString = random1 + random2 + Math.random().toString(36).substring(2);
+  // Helper function to convert hex string to base64url
+  const hexToBase64Url = (hexString: string): string => {
+    // Convert hex to bytes  
+    const bytes: number[] = [];
+    for (let i = 0; i < hexString.length; i += 2) {
+      bytes.push(parseInt(hexString.substr(i, 2), 16));
+    }
     
-    const codeVerifier = randomString.substring(0, 128)
+    // Convert bytes to base64url manually
+    const binaryString = String.fromCharCode.apply(null, bytes as any);
+    let base64 = '';
+    
+    // Simple base64 encoding
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    for (let i = 0; i < binaryString.length; i += 3) {
+      const b1 = binaryString.charCodeAt(i);
+      const b2 = i + 1 < binaryString.length ? binaryString.charCodeAt(i + 1) : 0;
+      const b3 = i + 2 < binaryString.length ? binaryString.charCodeAt(i + 2) : 0;
+      
+      const bitmap = (b1 << 16) | (b2 << 8) | b3;
+      
+      base64 += chars.charAt((bitmap >> 18) & 63);
+      base64 += chars.charAt((bitmap >> 12) & 63);
+      if (i + 1 < binaryString.length) {
+        base64 += chars.charAt((bitmap >> 6) & 63);
+      }
+      if (i + 2 < binaryString.length) {
+        base64 += chars.charAt(bitmap & 63);
+      }
+    }
+    
+    // Convert to base64url (replace +/ with -_ and remove =)
+    return base64
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=/g, '');
+  };
 
-    // Generate SHA256 hash of code verifier and encode as base64url
-    const codeChallenge = await Crypto.digestStringAsync(
+  // Helper function to generate PKCE code verifier and challenge
+  const generatePKCE = async () => {
+    // Generate a code verifier as a random string (43-128 chars)
+    const random1 = Math.random().toString(36).substring(2);
+    const random2 = Date.now().toString(36);
+    const random3 = Math.random().toString(36).substring(2);
+    const randomString = random1 + random2 + random3;
+    
+    // Create code verifier (unreserved characters: [A-Z] [a-z] [0-9] - . _ ~)
+    const codeVerifier = randomString.substring(0, 128)
+      .replace(/[^A-Za-z0-9\-._~]/g, '')
+      .substring(0, 128);
+
+    // Generate SHA256 hash of code verifier
+    const codeChallengeSha256 = await Crypto.digestStringAsync(
       Crypto.CryptoDigestAlgorithm.SHA256,
       codeVerifier
     );
+
+    // Convert hex to base64url
+    const codeChallenge = hexToBase64Url(codeChallengeSha256);
 
     return { codeVerifier, codeChallenge };
   };
@@ -85,24 +153,26 @@ const LoginScreen = () => {
   const generateState = () => {
     const random1 = Math.random().toString(36).substring(2);
     const random2 = Date.now().toString(36);
-    const randomString = random1 + random2 + Math.random().toString(36).substring(2);
+    const random3 = Math.random().toString(36).substring(2);
+    const randomString = random1 + random2 + random3;
     
     return randomString.substring(0, 32)
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '');
-  };
-
+      .replace(/[^A-Za-z0-9\-._~]/g, '')
+      .substring(0, 32);
+  }
   // Set up deep link listener for OAuth callback
   useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
       console.log('Deep link received:', url);
+      // If we are already processing a callback from openAuthSessionAsync, ignore this
+      if (isProcessingCallbackRef.current) return;
+
       const parsed = Linking.parse(url);
       const code = parsed.queryParams?.code as string;
       const state = parsed.queryParams?.state as string;
 
       if (code && state === oauthStateRef.current) {
-        console.log('OAuth code received:', code);
+        console.log('OAuth code received via deep link');
         handleOAuthCallback(code);
       } else if (parsed.queryParams?.error) {
         const error = parsed.queryParams.error as string;
@@ -124,7 +194,7 @@ const LoginScreen = () => {
     });
 
     // Set up a timeout for the OAuth flow (10 minutes)
-    // This prevents infinite loading if the browser is closed without callback
+    // This prevents infinite loading if something goes wrong
     const timeoutId = setInterval(() => {
       if (loading && authStartTimeRef.current) {
         const elapsedTime = Date.now() - authStartTimeRef.current;
@@ -135,6 +205,7 @@ const LoginScreen = () => {
           authStartTimeRef.current = null;
           codeVerifierRef.current = null;
           oauthStateRef.current = null;
+          isProcessingCallbackRef.current = false;
 
           Alert.alert(
             'Authentication Timeout',
@@ -164,6 +235,7 @@ const LoginScreen = () => {
   };
 
   const handleOAuthCallback = async (code: string) => {
+    isProcessingCallbackRef.current = true;
     try {
       if (!codeVerifierRef.current) {
         throw new Error('Code verifier not found');
@@ -190,10 +262,13 @@ const LoginScreen = () => {
       await SecureStore.setItemAsync('access_token', tokenResponse.accessToken);
       await SecureStore.setItemAsync('refresh_token', tokenResponse?.refreshToken || '');
 
-      // Clear auth timer
+      // Clear auth timer and flags
       authStartTimeRef.current = null;
       codeVerifierRef.current = null;
       oauthStateRef.current = null;
+
+      // Close the browser session
+      WebBrowser.dismissBrowser();
 
       // After first login, prompt user to enable biometrics for future sessions
       await promptEnableBiometricsIfNeeded();
@@ -202,7 +277,10 @@ const LoginScreen = () => {
       authStartTimeRef.current = null;
       codeVerifierRef.current = null;
       oauthStateRef.current = null;
+      isProcessingCallbackRef.current = false;
       setLoading(false);
+      
+      WebBrowser.dismissBrowser();
 
       Alert.alert(
         'Authentication Error',
@@ -259,6 +337,8 @@ const LoginScreen = () => {
       });
     }
 
+    // Reset processing flag before navigation
+    isProcessingCallbackRef.current = false;
     // Navigate to dashboard after the prompt resolves (or immediately if not applicable)
     router.replace('/(tabs)');
   };
@@ -267,6 +347,7 @@ const LoginScreen = () => {
   const onLogin = async () => {
     setLoading(true);
     authStartTimeRef.current = Date.now();
+    isProcessingCallbackRef.current = false;
     
     try {
       // Generate PKCE parameters
@@ -292,38 +373,52 @@ const LoginScreen = () => {
       const oauthUrl = `${authUrl}?${params.toString()}`;
       console.log('Opening OAuth URL:', oauthUrl);
 
-      // Open browser using expo-web-browser
-      // This keeps the browser session alive even if the app goes to background
-      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri, {
-        showInRecents: true,
-        createTask: true,
-        // Extra options to keep browser alive during 2FA
-        enableBarCollapsing: true,
-        enableDefaultShare: false,
-        preferredControlsStyle: 'bottom',
-      });
-
-      console.log('OpenAuthSessionAsync result:', result);
-
-      // If the browser was closed or cancelled, check if we received a callback
-      if (result.type === 'cancel' || result.type === 'dismiss') {
-        // The browser was closed - but we might still receive a deep link callback
-        // Keep the loading state and wait for the deep link
-        console.log('Browser closed/dismissed - waiting for deep link callback...');
-        return;
+      // We use Platform-specific browser opening strategies
+      let result;
+      if (Platform.OS === 'android') {
+        // On Android, openBrowserAsync with showInRecents: true is much more robust
+        // for 2FA flows where the user needs to switch to an authenticator app.
+        // It prevents the Custom Tab from being dismissed when the app is backgrounded.
+        result = await WebBrowser.openBrowserAsync(oauthUrl, {
+          showInRecents: true,
+        });
+      } else {
+        // On iOS, openAuthSessionAsync is the standard and handles session sharing better
+        result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
       }
 
-      // If we got here with success, the redirect was handled by the system
-      // but we should have also received a deep link event
+      console.log('Browser session result:', result);
+
       if (result.type === 'success') {
-        console.log('Auth session success:', result.url);
+        // This block is typically for openAuthSessionAsync (iOS)
+        const url = result.url;
+        const parsed = Linking.parse(url);
+        const code = parsed.queryParams?.code as string;
+        const returnedState = parsed.queryParams?.state as string;
+
+        if (code && returnedState === oauthStateRef.current) {
+          console.log('OAuth code received from session:', code);
+          await handleOAuthCallback(code);
+        } else {
+          throw new Error('Invalid state or missing authorization code');
+        }
+      } else if (result.type === 'cancel' || result.type === 'dismiss') {
+        // The browser was closed. We check if we're already processing a redirect
+        // caught by the Linking listener (manual fallback).
+        setTimeout(() => {
+          if (!isProcessingCallbackRef.current) {
+            console.log('Browser closed/dismissed by user');
+            setLoading(false);
+          }
+        }, 100);
       }
     } catch (error) {
-      console.error('OAuth error 2:', error);
+      console.error('OAuth error:', error);
       setLoading(false);
       authStartTimeRef.current = null;
       codeVerifierRef.current = null;
       oauthStateRef.current = null;
+      isProcessingCallbackRef.current = false;
 
       Alert.alert(
         'Authentication Error',
