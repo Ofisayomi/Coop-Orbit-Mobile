@@ -32,9 +32,6 @@ const LoginScreen = () => {
   const colorScheme = useColorScheme();
   const themeColors = Colors[colorScheme ?? 'light'];
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -75,110 +72,93 @@ const LoginScreen = () => {
   // Keycloak configuration
   const keycloakUrl = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
   const keycloakRealm = process.env.EXPO_PUBLIC_KEYCLOAK_REALM;
-  const keycloakClientId = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID || 'my-mobile-client';
+  const keycloakClientId = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID || 'coop-assist-mobile';
 
   const redirectUri = makeRedirectUri({
     scheme: 'com.onersofties.coopassistmobile',
     path: 'oauth'
   });
 
+  // Restore OAuth session state on mount (in case app was killed during 2FA)
+  useEffect(() => {
+    const restoreAuthSession = async () => {
+      try {
+        const [storedState, storedVerifier] = await Promise.all([
+          SecureStore.getItemAsync('oauth_state'),
+          SecureStore.getItemAsync('code_verifier'),
+        ]);
+        if (storedState) oauthStateRef.current = storedState;
+        if (storedVerifier) codeVerifierRef.current = storedVerifier;
+      } catch (err) {
+        console.error('Error restoring auth session:', err);
+      }
+    };
+    restoreAuthSession();
+  }, []);
+
   useEffect(() => {
     checkBiometrics();
   }, []);
 
-  // Helper function to convert hex string to base64url
-  const hexToBase64Url = (hexString: string): string => {
-    // Convert hex to bytes  
-    const bytes: number[] = [];
-    for (let i = 0; i < hexString.length; i += 2) {
-      bytes.push(parseInt(hexString.substr(i, 2), 16));
+  // Helper function to generate a random string for PKCE (43-128 chars)
+  // Using only alphanumeric characters to avoid any potential encoding issues with -._~
+  const generateRandomString = (length: number) => {
+    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += charset.charAt(Math.floor(Math.random() * charset.length));
     }
-    
-    // Convert bytes to base64url manually
-    const binaryString = String.fromCharCode.apply(null, bytes as any);
-    let base64 = '';
-    
-    // Simple base64 encoding
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    for (let i = 0; i < binaryString.length; i += 3) {
-      const b1 = binaryString.charCodeAt(i);
-      const b2 = i + 1 < binaryString.length ? binaryString.charCodeAt(i + 1) : 0;
-      const b3 = i + 2 < binaryString.length ? binaryString.charCodeAt(i + 2) : 0;
-      
-      const bitmap = (b1 << 16) | (b2 << 8) | b3;
-      
-      base64 += chars.charAt((bitmap >> 18) & 63);
-      base64 += chars.charAt((bitmap >> 12) & 63);
-      if (i + 1 < binaryString.length) {
-        base64 += chars.charAt((bitmap >> 6) & 63);
-      }
-      if (i + 2 < binaryString.length) {
-        base64 += chars.charAt(bitmap & 63);
-      }
-    }
-    
-    // Convert to base64url (replace +/ with -_ and remove =)
-    return base64
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '');
+    return result;
   };
 
   // Helper function to generate PKCE code verifier and challenge
   const generatePKCE = async () => {
-    // Generate a code verifier as a random string (43-128 chars)
-    const random1 = Math.random().toString(36).substring(2);
-    const random2 = Date.now().toString(36);
-    const random3 = Math.random().toString(36).substring(2);
-    const randomString = random1 + random2 + random3;
-    
-    // Create code verifier (unreserved characters: [A-Z] [a-z] [0-9] - . _ ~)
-    const codeVerifier = randomString.substring(0, 128)
-      .replace(/[^A-Za-z0-9\-._~]/g, '')
-      .substring(0, 128);
+    // Generate a code verifier (spec recommends 43-128 chars)
+    const codeVerifier = generateRandomString(64);
 
-    // Generate SHA256 hash of code verifier
-    const codeChallengeSha256 = await Crypto.digestStringAsync(
+    // Generate SHA256 hash of code verifier and encode as base64url
+    const hash = await Crypto.digestStringAsync(
       Crypto.CryptoDigestAlgorithm.SHA256,
-      codeVerifier
+      codeVerifier,
+      { encoding: 'base64' as any }
     );
 
-    // Convert hex to base64url
-    const codeChallenge = hexToBase64Url(codeChallengeSha256);
+    // Convert base64 to base64url (RFC 7636)
+    const codeChallenge = hash
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
 
     return { codeVerifier, codeChallenge };
   };
 
   // Helper function to generate random state parameter
   const generateState = () => {
-    const random1 = Math.random().toString(36).substring(2);
-    const random2 = Date.now().toString(36);
-    const random3 = Math.random().toString(36).substring(2);
-    const randomString = random1 + random2 + random3;
-    
-    return randomString.substring(0, 32)
-      .replace(/[^A-Za-z0-9\-._~]/g, '')
-      .substring(0, 32);
+    return generateRandomString(32);
   }
+
   // Set up deep link listener for OAuth callback
   useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
       console.log('Deep link received:', url);
-      // If we are already processing a callback from openAuthSessionAsync, ignore this
-      if (isProcessingCallbackRef.current) return;
-
+      
       const parsed = Linking.parse(url);
       const code = parsed.queryParams?.code as string;
       const state = parsed.queryParams?.state as string;
 
-      if (code && state === oauthStateRef.current) {
+      // Ensure we have a code and the state matches what we sent
+      if (code && state && state === oauthStateRef.current) {
+        if (isProcessingCallbackRef.current) {
+          console.log('Already processing a callback, ignoring duplicate');
+          return;
+        }
         console.log('OAuth code received via deep link');
         handleOAuthCallback(code);
       } else if (parsed.queryParams?.error) {
         const error = parsed.queryParams.error as string;
         console.error('OAuth error:', error);
         setLoading(false);
-        authStartTimeRef.current = null;
+        cleanupAuthSession();
         Alert.alert('Authentication Failed', `Error: ${error}`);
       }
     };
@@ -194,18 +174,13 @@ const LoginScreen = () => {
     });
 
     // Set up a timeout for the OAuth flow (10 minutes)
-    // This prevents infinite loading if something goes wrong
     const timeoutId = setInterval(() => {
       if (loading && authStartTimeRef.current) {
         const elapsedTime = Date.now() - authStartTimeRef.current;
-        // 10 minutes timeout
         if (elapsedTime > 10 * 60 * 1000) {
           console.warn('OAuth timeout: No callback received after 10 minutes');
           setLoading(false);
-          authStartTimeRef.current = null;
-          codeVerifierRef.current = null;
-          oauthStateRef.current = null;
-          isProcessingCallbackRef.current = false;
+          cleanupAuthSession();
 
           Alert.alert(
             'Authentication Timeout',
@@ -214,7 +189,7 @@ const LoginScreen = () => {
           );
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, 30000);
 
     return () => {
       deeplinkSubscriptionRef.current?.remove();
@@ -222,12 +197,22 @@ const LoginScreen = () => {
     };
   }, [loading]);
 
+  const cleanupAuthSession = async () => {
+    authStartTimeRef.current = null;
+    codeVerifierRef.current = null;
+    oauthStateRef.current = null;
+    isProcessingCallbackRef.current = false;
+    await Promise.all([
+      SecureStore.deleteItemAsync('oauth_state'),
+      SecureStore.deleteItemAsync('code_verifier'),
+    ]);
+  };
+
   const checkBiometrics = async () => {
     const compatible = await LocalAuthentication.hasHardwareAsync();
     const enrolled = await LocalAuthentication.isEnrolledAsync();
     setIsBiometricSupported(compatible && enrolled);
 
-    // Default is false, check if user has explicitly enabled it in settings previously
     const enabled = await SecureStore.getItemAsync('biometrics_enabled');
     if (enabled === 'true') {
       setIsBiometricEnabled(true);
@@ -235,16 +220,27 @@ const LoginScreen = () => {
   };
 
   const handleOAuthCallback = async (code: string) => {
+    if (isProcessingCallbackRef.current) return;
     isProcessingCallbackRef.current = true;
+    
     try {
-      if (!codeVerifierRef.current) {
-        throw new Error('Code verifier not found');
+      // Ensure we have the code verifier
+      let verifier = codeVerifierRef.current;
+      if (!verifier) {
+        console.log('Code verifier missing from ref, trying SecureStore...');
+        verifier = await SecureStore.getItemAsync('code_verifier');
+      }
+
+      if (!verifier) {
+        throw new Error('Code verifier not found. Session may have expired.');
       }
 
       const discovery = {
+        authorizationEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`,
         tokenEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/token`,
       };
 
+      console.log('Exchanging code for tokens...');
       // Exchange code for tokens
       const tokenResponse = await exchangeCodeAsync(
         {
@@ -252,39 +248,35 @@ const LoginScreen = () => {
           code: code,
           redirectUri: redirectUri,
           extraParams: {
-            code_verifier: codeVerifierRef.current,
+            code_verifier: verifier,
           }
         },
         discovery as any
       );
 
-      // Store tokens in device Secure Hardware
+      // Store tokens
       await SecureStore.setItemAsync('access_token', tokenResponse.accessToken);
-      await SecureStore.setItemAsync('refresh_token', tokenResponse?.refreshToken || '');
+      if (tokenResponse.refreshToken) {
+        await SecureStore.setItemAsync('refresh_token', tokenResponse.refreshToken);
+      }
 
-      // Clear auth timer and flags
-      authStartTimeRef.current = null;
-      codeVerifierRef.current = null;
-      oauthStateRef.current = null;
+      console.log('Token exchange successful');
 
-      // Close the browser session
+      // Close browser and cleanup session
       WebBrowser.dismissBrowser();
+      await cleanupAuthSession();
 
       // After first login, prompt user to enable biometrics for future sessions
       await promptEnableBiometricsIfNeeded();
     } catch (error) {
       console.error('Token exchange failed:', error);
-      authStartTimeRef.current = null;
-      codeVerifierRef.current = null;
-      oauthStateRef.current = null;
-      isProcessingCallbackRef.current = false;
+      await cleanupAuthSession();
       setLoading(false);
-      
       WebBrowser.dismissBrowser();
 
       Alert.alert(
         'Authentication Error',
-        'Failed to complete authentication. Please try again.',
+        'Failed to complete authentication. PKCE verification or network error. Please try again.',
         [{ text: 'OK' }]
       );
     }
@@ -293,7 +285,6 @@ const LoginScreen = () => {
   /**
    * After a successful first login, if the device supports biometrics and it's not
    * yet enabled, ask the user if they'd like to use fingerprint login next time.
-   * The refresh token is already stored in Secure Hardware from the login above.
    */
   const promptEnableBiometricsIfNeeded = async () => {
     const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -301,25 +292,18 @@ const LoginScreen = () => {
     const alreadyEnabled = await SecureStore.getItemAsync('biometrics_enabled');
 
     if (compatible && enrolled && alreadyEnabled !== 'true') {
-      // Await the user's choice before navigating
       await new Promise<void>((resolve) => {
         Alert.alert(
           'Enable Fingerprint Login?',
           'Would you like to use your fingerprint to log in quickly next time?',
           [
-            {
-              text: 'Not Now',
-              style: 'cancel',
-              onPress: () => resolve(),
-            },
+            { text: 'Not Now', style: 'cancel', onPress: () => resolve() },
             {
               text: 'Enable',
               onPress: async () => {
                 try {
-                  // Require biometric confirmation to enroll
                   const result = await LocalAuthentication.authenticateAsync({
                     promptMessage: 'Confirm your fingerprint to enable biometric login',
-                    fallbackLabel: 'Cancel',
                   });
                   if (result.success) {
                     await SecureStore.setItemAsync('biometrics_enabled', 'true');
@@ -337,9 +321,6 @@ const LoginScreen = () => {
       });
     }
 
-    // Reset processing flag before navigation
-    isProcessingCallbackRef.current = false;
-    // Navigate to dashboard after the prompt resolves (or immediately if not applicable)
     router.replace('/(tabs)');
   };
 
@@ -358,6 +339,12 @@ const LoginScreen = () => {
       const state = generateState();
       oauthStateRef.current = state;
 
+      // Persist state and verifier for app-switching robustness
+      await Promise.all([
+        SecureStore.setItemAsync('oauth_state', state),
+        SecureStore.setItemAsync('code_verifier', codeVerifier),
+      ]);
+
       // Build OAuth authorization URL
       const authUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`;
       const params = new URLSearchParams({
@@ -373,52 +360,40 @@ const LoginScreen = () => {
       const oauthUrl = `${authUrl}?${params.toString()}`;
       console.log('Opening OAuth URL:', oauthUrl);
 
-      // We use Platform-specific browser opening strategies
       let result;
       if (Platform.OS === 'android') {
-        // On Android, openBrowserAsync with showInRecents: true is much more robust
-        // for 2FA flows where the user needs to switch to an authenticator app.
-        // It prevents the Custom Tab from being dismissed when the app is backgrounded.
         result = await WebBrowser.openBrowserAsync(oauthUrl, {
           showInRecents: true,
         });
       } else {
-        // On iOS, openAuthSessionAsync is the standard and handles session sharing better
         result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
       }
 
       console.log('Browser session result:', result);
 
       if (result.type === 'success') {
-        // This block is typically for openAuthSessionAsync (iOS)
         const url = result.url;
         const parsed = Linking.parse(url);
         const code = parsed.queryParams?.code as string;
         const returnedState = parsed.queryParams?.state as string;
 
         if (code && returnedState === oauthStateRef.current) {
-          console.log('OAuth code received from session:', code);
           await handleOAuthCallback(code);
         } else {
           throw new Error('Invalid state or missing authorization code');
         }
       } else if (result.type === 'cancel' || result.type === 'dismiss') {
-        // The browser was closed. We check if we're already processing a redirect
-        // caught by the Linking listener (manual fallback).
         setTimeout(() => {
           if (!isProcessingCallbackRef.current) {
             console.log('Browser closed/dismissed by user');
             setLoading(false);
           }
-        }, 100);
+        }, 500);
       }
     } catch (error) {
       console.error('OAuth error:', error);
+      await cleanupAuthSession();
       setLoading(false);
-      authStartTimeRef.current = null;
-      codeVerifierRef.current = null;
-      oauthStateRef.current = null;
-      isProcessingCallbackRef.current = false;
 
       Alert.alert(
         'Authentication Error',
