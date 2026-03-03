@@ -362,10 +362,13 @@ const LoginScreen = () => {
 
       let result;
       if (Platform.OS === 'android') {
+        // On Android, openBrowserAsync with showInRecents: true is the only way
+        // to ensure the browser doesn't close when switching to a 2FA app.
         result = await WebBrowser.openBrowserAsync(oauthUrl, {
           showInRecents: true,
         });
       } else {
+        // On iOS, openAuthSessionAsync is standard and handles automatic return.
         result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
       }
 
@@ -383,12 +386,14 @@ const LoginScreen = () => {
           throw new Error('Invalid state or missing authorization code');
         }
       } else if (result.type === 'cancel' || result.type === 'dismiss') {
+        // On Android, the result might be 'dismiss' as soon as the app backgrounds.
+        // We wait for the Linking listener to catch the redirect.
         setTimeout(() => {
           if (!isProcessingCallbackRef.current) {
             console.log('Browser closed/dismissed by user');
             setLoading(false);
           }
-        }, 500);
+        }, 3000);
       }
     } catch (error) {
       console.error('OAuth error:', error);
