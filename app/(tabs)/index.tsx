@@ -134,7 +134,7 @@ const DashboardScreen = () => {
             { name: 'Make Payment', icon: 'card-outline', lightBg: iconBgMid, route: '/make-payment' },
             { name: 'Withdraw', icon: 'arrow-up-circle-outline', lightBg: iconBgLight },
             { name: 'History', icon: 'time-outline', lightBg: iconBgMid, route: '/(tabs)/history' },
-            { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid },
+            { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/(tabs)/guarantor-requests' },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
           ].map((action, index) => (
             <TouchableOpacity
