@@ -50,7 +50,7 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-local-authentication",
-      "react-native-app-auth"
+      "react-native-app-auth"      
     ],
     "experiments": {
       "typedRoutes": true,
