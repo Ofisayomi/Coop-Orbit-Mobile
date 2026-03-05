@@ -130,10 +130,10 @@ const DashboardScreen = () => {
         <Text style={[styles.sectionTitle, { color: sectionTitleColor }]}>Quick Actions</Text>
         <View style={styles.quickActionsGrid}>
           {[
-            { name: 'Request Loan', icon: 'document-text-outline', lightBg: iconBgLight },
+            { name: 'Request Loan', icon: 'document-text-outline', lightBg: iconBgLight, route: '/request-loan' },
             { name: 'Make Payment', icon: 'card-outline', lightBg: iconBgMid, route: '/make-payment' },
             { name: 'Withdraw', icon: 'arrow-up-circle-outline', lightBg: iconBgLight },
-            { name: 'History', icon: 'time-outline', lightBg: iconBgMid, route: '/(tabs)/history' },
+            { name: 'My Loans', icon: 'list-outline', lightBg: iconBgMid, route: '/loans' },
             { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/(tabs)/guarantor-requests' },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
           ].map((action, index) => (

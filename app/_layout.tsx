@@ -17,6 +17,9 @@ function RootLayoutNav() {
       <Stack initialRouteName="login">
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="make-payment" options={{ headerShown: false }} />
+        <Stack.Screen name="request-loan" options={{ headerShown: false }} />
+        <Stack.Screen name="loans" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
