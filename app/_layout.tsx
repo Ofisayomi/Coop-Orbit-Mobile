@@ -20,6 +20,9 @@ function RootLayoutNav() {
         <Stack.Screen name="make-payment" options={{ headerShown: false }} />
         <Stack.Screen name="request-loan" options={{ headerShown: false }} />
         <Stack.Screen name="loans" options={{ headerShown: false }} />
+        <Stack.Screen name="loan-details" options={{ headerShown: false }} />
+        <Stack.Screen name="guarantor-requests" options={{ headerShown: false }} />
+        <Stack.Screen name="payment-requests" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />

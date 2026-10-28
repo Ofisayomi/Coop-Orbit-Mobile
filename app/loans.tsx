@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
+    Modal,
     ScrollView,
     StyleSheet,
     Text,
@@ -39,6 +40,7 @@ const LoanManagementScreen = () => {
   const isDark = colorScheme === 'dark';
 
   const [loans, setLoans] = useState<LoanApplication[]>(DUMMY_LOANS);
+  const [selectedLoan, setSelectedLoan] = useState<LoanApplication | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'All' | 'Pending' | 'Approved' | 'Disbursed'>('All');
 
@@ -75,6 +77,19 @@ const LoanManagementScreen = () => {
         return isDark ? '#0C2340' : '#DBEAFE';
       default:
         return inputBg;
+    }
+  };
+
+  const getStatusIconName = (status: string): keyof typeof Ionicons.glyphMap => {
+    switch (status) {
+      case 'Approved':
+        return 'checkmark-circle';
+      case 'Pending':
+        return 'time-outline';
+      case 'Disbursed':
+        return 'shield-checkmark';
+      default:
+        return 'help-circle-outline';
     }
   };
 
@@ -158,44 +173,50 @@ const LoanManagementScreen = () => {
           ))}
         </ScrollView>
 
-        {/* Loans Table */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.tableScrollContainer}>
-          <View style={[styles.tableContainer, { backgroundColor: cardBg }]}>
-            {/* Table Header */}
-            <View
-              style={[
-                styles.tableHeader,
-                {
-                  backgroundColor: isDark ? '#2A2A2A' : '#F9FAFB',
-                  borderBottomColor: tableBorder,
-                },
-              ]}
-            >
-              <View style={[styles.headerCell, { width: 120 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>MEMBER</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 130 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>LOAN TYPE</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 100, alignItems: 'flex-end' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>AMOUNT</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 100, alignItems: 'center' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>STATUS</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 100 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>DUE DATE</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 70, alignItems: 'center' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>ACTION</Text>
-              </View>
+        {/* Loans Table (Compact, No Horizontal Scrollbar) */}
+        <View style={[styles.tableContainer, { backgroundColor: cardBg }]}>
+          {/* Table Header */}
+          <View
+            style={[
+              styles.tableHeader,
+              {
+                backgroundColor: isDark ? '#2A2A2A' : '#F9FAFB',
+                borderBottomColor: tableBorder,
+              },
+            ]}
+          >
+            <View style={styles.colMemberType}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Member / Type</Text>
             </View>
+            <View style={styles.colDateId}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Due Date / ID</Text>
+            </View>
+            <View style={styles.colAmountStatus}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Amount / Status</Text>
+            </View>
+          </View>
 
-            {/* Table Rows */}
-            {filteredLoans.length > 0 ? (
-              filteredLoans.map((loan) => (
-                <View
+          {/* Table Rows */}
+          {filteredLoans.length > 0 ? (
+            filteredLoans.map((loan) => {
+              const statusColor = getStatusColor(loan.status);
+              return (
+                <TouchableOpacity
                   key={loan.id}
+                  activeOpacity={0.7}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/loan-details',
+                      params: {
+                        id: loan.id,
+                        applicantName: loan.memberName,
+                        loanName: loan.loanType,
+                        amount: String(loan.amount),
+                        status: loan.status,
+                        dueDate: loan.dueDate,
+                      },
+                    })
+                  }
                   style={[
                     styles.tableRow,
                     {
@@ -204,55 +225,120 @@ const LoanManagementScreen = () => {
                     },
                   ]}
                 >
-                  <View style={[styles.tableCell, { width: 120 }]}>
-                    <Text style={[styles.tableText, { color: textPrimary, fontWeight: '600' }]} numberOfLines={1}>
+                  <View style={styles.colMemberType}>
+                    <Text style={[styles.memberNameText, { color: textPrimary }]} numberOfLines={1}>
                       {loan.memberName}
                     </Text>
-                  </View>
-                  <View style={[styles.tableCell, { width: 130 }]}>
-                    <Text style={[styles.tableText, { color: textSecondary }]} numberOfLines={1}>{loan.loanType}</Text>
-                  </View>
-                  <View style={[styles.tableCell, { width: 100, alignItems: 'flex-end' }]}>
-                    <Text style={[styles.tableText, { color: textPrimary, fontWeight: '600' }]}>
-                      ₦{loan.amount.toLocaleString()}
+                    <Text style={[styles.typeText, { color: textSecondary }]} numberOfLines={1}>
+                      {loan.loanType}
                     </Text>
                   </View>
-                  <View style={[styles.tableCell, { width: 100, alignItems: 'center' }]}>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: getStatusBgColor(loan.status) },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusText,
-                          { color: getStatusColor(loan.status), fontWeight: '600' },
-                        ]}
-                      >
+
+                  <View style={styles.colDateId}>
+                    <Text style={[styles.dateText, { color: textPrimary }]}>{loan.dueDate}</Text>
+                    <Text style={[styles.refText, { color: textSecondary }]} numberOfLines={1}>
+                      #LN-{loan.id}
+                    </Text>
+                  </View>
+
+                  <View style={styles.colAmountStatus}>
+                    <Text style={[styles.amountText, { color: textPrimary }]}>
+                      ₦{loan.amount.toLocaleString()}
+                    </Text>
+                    <View style={styles.statusRow}>
+                      <Ionicons
+                        name={getStatusIconName(loan.status)}
+                        size={12}
+                        color={statusColor}
+                      />
+                      <Text style={[styles.compactStatusText, { color: statusColor }]}>
                         {loan.status}
                       </Text>
                     </View>
                   </View>
-                  <View style={[styles.tableCell, { width: 100 }]}>
-                    <Text style={[styles.tableText, { color: textPrimary }]}>{loan.dueDate}</Text>
+                </TouchableOpacity>
+              );
+            })
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="mail-outline" size={48} color={textSecondary} />
+              <Text style={[styles.emptyText, { color: textSecondary }]}>No loans found</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Loan Details Modal */}
+      <Modal
+        visible={selectedLoan !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedLoan(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContentCard, { backgroundColor: cardBg }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: tableBorder }]}>
+              <Text style={[styles.modalHeaderTitle, { color: textPrimary }]}>Loan Details</Text>
+              <TouchableOpacity onPress={() => setSelectedLoan(null)} style={styles.modalCloseButton}>
+                <Ionicons name="close" size={22} color={textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedLoan && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
+                <View style={styles.modalStatusSection}>
+                  <View style={[styles.modalStatusIconCircle, { backgroundColor: getStatusBgColor(selectedLoan.status) }]}>
+                    <Ionicons
+                      name={getStatusIconName(selectedLoan.status)}
+                      size={36}
+                      color={getStatusColor(selectedLoan.status)}
+                    />
                   </View>
-                  <View style={[styles.tableCell, { width: 70, alignItems: 'center' }]}>
-                    <TouchableOpacity>
-                      <Text style={[styles.viewLink, { color: primary }]}>View</Text>
-                    </TouchableOpacity>
+                  <Text style={[styles.modalAmount, { color: textPrimary }]}>
+                    ₦{selectedLoan.amount.toLocaleString()}
+                  </Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(selectedLoan.status), marginTop: 8 }]}>
+                    <Text style={[styles.statusText, { color: getStatusColor(selectedLoan.status), fontSize: 11 }]}>
+                      Loan {selectedLoan.status}
+                    </Text>
                   </View>
                 </View>
-              ))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="inbox-outline" size={48} color={textSecondary} />
-                <Text style={[styles.emptyText, { color: textSecondary }]}>No loans found</Text>
-              </View>
+
+                <View style={[styles.modalDetailsList, { borderColor: inputBorder }]}>
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Member Name</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.memberName}</Text>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Loan Type</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.loanType}</Text>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Due Date</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.dueDate}</Text>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomWidth: 0 }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Loan ID</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary, fontSize: 12 }]} numberOfLines={1}>
+                      #LN-{selectedLoan.id}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.modalDoneButton, { backgroundColor: primary }]}
+                  onPress={() => setSelectedLoan(null)}
+                >
+                  <Text style={styles.modalDoneButtonText}>Close</Text>
+                </TouchableOpacity>
+              </ScrollView>
             )}
           </View>
-        </ScrollView>
-      </ScrollView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -331,49 +417,84 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 2,
+    width: '100%',
+    marginBottom: 24,
   },
   tableHeader: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
+    alignItems: 'center',
   },
-  headerCell: {
+  colMemberType: {
+    flex: 1.3,
     justifyContent: 'center',
-    paddingHorizontal: 8,
+  },
+  colDateId: {
+    flex: 1.1,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+  },
+  colAmountStatus: {
+    flex: 1.2,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   headerText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   tableRow: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
     alignItems: 'center',
   },
-  tableCell: {
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  tableText: {
+  memberNameText: {
     fontSize: 12,
+    fontWeight: '600',
+  },
+  typeText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  dateText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  refText: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  amountText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 2,
+  },
+  compactStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 4,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'center',
   },
   statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  viewLink: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
   },
   emptyContainer: {
     paddingVertical: 40,
@@ -384,6 +505,90 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContentCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  modalStatusSection: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalStatusIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  modalAmount: {
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  modalDetailsList: {
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 20,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  modalDetailLabel: {
+    fontSize: 13,
+  },
+  modalDetailValue: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalDoneButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDoneButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

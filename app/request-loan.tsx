@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+    Alert,
+    ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -14,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { AccountService, type LoanProductDto } from '@/services/accountService';
 
 interface Guarantor {
   id: string;
@@ -23,11 +26,47 @@ interface Guarantor {
   selected: boolean;
 }
 
-const DUMMY_GUARANTORS: Guarantor[] = [
-  { id: '1', name: 'James Owalo', joinDate: 'MEMBER SINCE JAN 2021', avatar: 'J', selected: false },
-  { id: '2', name: 'Okaafiyago Owalo', joinDate: 'MEMBER SINCE JUL 2021', avatar: 'O', selected: false },
-  { id: '3', name: 'Joshua Gonzalez', joinDate: 'MEMBER SINCE MAY 2015', avatar: 'J', selected: false },
-];
+interface FloatingDropdownProps {
+  options: string[];
+  onSelect: (value: string) => void;
+  selectedValue: string;
+  placeholder: string;
+  isOpen: boolean;
+  setIsOpen: (value: boolean) => void;
+  isDark: boolean;
+  cardBg: string;
+  inputBg: string;
+  inputBorder: string;
+  textPrimary: string;
+  textSecondary: string;
+  primary: string;
+}
+
+const FloatingDropdown = ({ options, onSelect, selectedValue, placeholder, isOpen, setIsOpen, isDark, cardBg, inputBg, inputBorder, textPrimary, textSecondary, primary }: FloatingDropdownProps) => (
+  <View style={[styles.dropdownContainer, isOpen && { zIndex: 1000 }]}>
+    <TouchableOpacity
+      style={[styles.dropdown, { backgroundColor: inputBg, borderColor: isOpen ? primary : inputBorder }]}
+      onPress={() => setIsOpen(!isOpen)}>
+      <Text style={[styles.dropdownText, { color: selectedValue ? textPrimary : textSecondary }]}>{selectedValue || placeholder}</Text>
+      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={20} color={textSecondary} />
+    </TouchableOpacity>
+    {isOpen && (
+      <View style={[styles.floatingMenu, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+        <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+          {options.map((option) => (
+            <TouchableOpacity
+              key={option}
+              style={[styles.modalOption, selectedValue === option && { backgroundColor: isDark ? '#2D3748' : '#F7FAFC' }]}
+              onPress={() => { onSelect(option); setIsOpen(false); }}>
+              <Text style={[styles.modalOptionText, { color: textPrimary }]}>{option}</Text>
+              {selectedValue === option && <Ionicons name="checkmark" size={18} color={primary} />}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    )}
+  </View>
+);
 
 const RequestLoanScreen = () => {
   const router = useRouter();
@@ -38,12 +77,16 @@ const RequestLoanScreen = () => {
   const [amount, setAmount] = useState('');
   const [purpose, setPurpose] = useState('');
   const [duration, setDuration] = useState('12');
-  const [startDate, setStartDate] = useState('');
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [repaymentSource, setRepaymentSource] = useState('Bank Transfer');
-  const [guarantors, setGuarantors] = useState<Guarantor[]>(DUMMY_GUARANTORS);
+  const [guarantors, setGuarantors] = useState<Guarantor[]>([]);
   const [searchGuarantors, setSearchGuarantors] = useState('');
   const [showLoanTypeModal, setShowLoanTypeModal] = useState(false);
   const [showRepaymentModal, setShowRepaymentModal] = useState(false);
+  const [loanProducts, setLoanProducts] = useState<LoanProductDto[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -54,80 +97,116 @@ const RequestLoanScreen = () => {
   const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
   const primary = '#173581';
 
-  const loanTypes = ['Personal Loan', 'Business Loan', 'Education Loan', 'Housing Loan', 'Emergency Loan'];
+  const loanTypes = loanProducts.map((product) => product.loanName);
   const repaymentSources = ['Bank Transfer', 'Mobile Money', 'Cash'];
+  const selectedLoanProduct = useMemo(() => loanProducts.find((product) => product.loanId === loanType), [loanProducts, loanType]);
 
   const selectedGuarantorsCount = guarantors.filter((g) => g.selected).length;
 
+  // Loan calculation logic matching web
+  const { monthlyPayment, totalInterest, totalRepayment } = useMemo(() => {
+    const principal = Number(amount) || 0;
+    const months = Number(duration) || 0;
+    const rate = (selectedLoanProduct?.interestRate ?? 0) * 100;
+
+    if (principal <= 0 || months <= 0) {
+      return { monthlyPayment: 0, totalInterest: 0, totalRepayment: 0 };
+    }
+
+    const totalInterestValue = (principal * rate * months) / (100 * 12);
+    const totalRepaymentValue = principal + totalInterestValue;
+    const monthlyPaymentValue = totalRepaymentValue / months;
+
+    return {
+      monthlyPayment: monthlyPaymentValue,
+      totalInterest: totalInterestValue,
+      totalRepayment: totalRepaymentValue,
+    };
+  }, [amount, duration, selectedLoanProduct]);
+
+  useEffect(() => {
+    const loadLoanFormData = async () => {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const [products, availableGuarantors] = await Promise.all([
+          AccountService.getLoanProducts(),
+          AccountService.getGuarantors(),
+        ]);
+        setLoanProducts(products);
+        setGuarantors(availableGuarantors.map((guarantor) => {
+          const name = `${guarantor.firstName ?? ''} ${guarantor.lastName ?? ''}`.trim() || guarantor.membershipId || 'Member';
+          return {
+            id: guarantor.id,
+            name,
+            joinDate: guarantor.membershipId ? `MEMBER ID: ${guarantor.membershipId}` : 'COOPERATIVE MEMBER',
+            avatar: name.charAt(0).toUpperCase(),
+            selected: false,
+          };
+        }));
+      } catch {
+        setLoadError('Unable to load loan products and guarantors. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadLoanFormData();
+  }, []);
+
+  const selectLoanType = (loanName: string) => {
+    const product = loanProducts.find((item) => item.loanName === loanName);
+    setLoanType(product?.loanId ?? '');
+    setGuarantors((current) => current.map((guarantor) => ({ ...guarantor, selected: false })));
+  };
+
   const toggleGuarantor = (id: string) => {
-    setGuarantors(guarantors.map((g) => (g.id === id ? { ...g, selected: !g.selected } : g)));
+    const requiredGuarantors = selectedLoanProduct?.guarantorCount ?? 0;
+    setGuarantors((current) => {
+      const isSelected = current.find((guarantor) => guarantor.id === id)?.selected;
+      const selectedCount = current.filter((guarantor) => guarantor.selected).length;
+      if (!isSelected && selectedCount >= requiredGuarantors) return current;
+      return current.map((guarantor) => guarantor.id === id ? { ...guarantor, selected: !guarantor.selected } : guarantor);
+    });
   };
 
   const filteredGuarantors = guarantors.filter((g) =>
     g.name.toLowerCase().includes(searchGuarantors.toLowerCase())
   );
 
-  const handleSubmit = () => {
-    if (!loanType || !amount || !purpose || selectedGuarantorsCount === 0) {
-      alert('Please fill all required fields and select at least one guarantor');
+  const handleSubmit = async () => {
+    const requestedAmount = Number(amount);
+    const requiredGuarantors = selectedLoanProduct?.guarantorCount ?? 0;
+    if (!selectedLoanProduct || !Number.isFinite(requestedAmount) || requestedAmount <= 0 || !purpose.trim()) {
+      Alert.alert('Missing information', 'Select a loan product, enter a valid amount, and describe the loan purpose.');
       return;
     }
-    alert('Loan application submitted successfully!');
-    router.back();
+    if (selectedGuarantorsCount !== requiredGuarantors) {
+      Alert.alert('Guarantors required', `Select exactly ${requiredGuarantors} guarantor${requiredGuarantors === 1 ? '' : 's'} for this loan product.`);
+      return;
+    }
+    if (Number.isNaN(Date.parse(startDate))) {
+      Alert.alert('Invalid start date', 'Enter the preferred start date as YYYY-MM-DD.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const message = await AccountService.requestLoan({
+        loanId: selectedLoanProduct.loanId,
+        amount: requestedAmount,
+        guarantors: guarantors.filter((guarantor) => guarantor.selected).map((guarantor) => guarantor.id),
+        preferredStartDate: new Date(startDate).toISOString(),
+        comment: purpose.trim(),
+        duration: Number(duration),
+      });
+      Alert.alert('Loan request submitted', message, [{ text: 'OK', onPress: () => router.back() }]);
+    } catch (error) {
+      Alert.alert('Unable to submit loan request', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
-
-  const FloatingDropdown = ({ 
-    options, 
-    onSelect, 
-    selectedValue,
-    placeholder,
-    isOpen,
-    setIsOpen
-  }: { 
-    options: string[], 
-    onSelect: (val: string) => void,
-    selectedValue: string,
-    placeholder: string,
-    isOpen: boolean,
-    setIsOpen: (val: boolean) => void
-  }) => (
-    <View style={[styles.dropdownContainer, isOpen && { zIndex: 1000 }]}>
-      <TouchableOpacity
-        style={[styles.dropdown, { backgroundColor: inputBg, borderColor: isOpen ? primary : inputBorder }]}
-        onPress={() => setIsOpen(!isOpen)}
-      >
-        <Text style={[styles.dropdownText, { color: selectedValue ? textPrimary : textSecondary }]}>
-          {selectedValue || placeholder}
-        </Text>
-        <Ionicons name={isOpen ? "chevron-up" : "chevron-down"} size={20} color={textSecondary} />
-      </TouchableOpacity>
-
-      {isOpen && (
-        <View style={[styles.floatingMenu, { backgroundColor: cardBg, borderColor: inputBorder }]}>
-          <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled={true}>
-            {options.map((option) => (
-              <TouchableOpacity
-                key={option}
-                style={[
-                  styles.modalOption,
-                  selectedValue === option && { backgroundColor: isDark ? '#2D3748' : '#F7FAFC' }
-                ]}
-                onPress={() => {
-                  onSelect(option);
-                  setIsOpen(false);
-                }}
-              >
-                <Text style={[styles.modalOptionText, { color: textPrimary }]}>{option}</Text>
-                {selectedValue === option && (
-                  <Ionicons name="checkmark" size={18} color={primary} />
-                )}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-    </View>
-  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
@@ -152,6 +231,9 @@ const RequestLoanScreen = () => {
             Please Complete The Single Form Below To Submit Your Request.
           </Text>
 
+          {isLoading ? <ActivityIndicator style={styles.loadingIndicator} color={primary} /> : null}
+          {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
+
           {/* Section 1: Loan Details */}
           <View style={[styles.section, { backgroundColor: cardBg, marginBottom: 24, zIndex: 2000 }]}>
             <View style={styles.sectionHeader}>
@@ -166,11 +248,18 @@ const RequestLoanScreen = () => {
               </Text>
               <FloatingDropdown 
                 options={loanTypes}
-                onSelect={setLoanType}
-                selectedValue={loanType}
+                onSelect={selectLoanType}
+                selectedValue={selectedLoanProduct?.loanName ?? ''}
                 placeholder="Select Loan Type"
                 isOpen={showLoanTypeModal}
                 setIsOpen={setShowLoanTypeModal}
+                isDark={isDark}
+                cardBg={cardBg}
+                inputBg={inputBg}
+                inputBorder={inputBorder}
+                textPrimary={textPrimary}
+                textSecondary={textSecondary}
+                primary={primary}
               />
             </View>
 
@@ -188,7 +277,7 @@ const RequestLoanScreen = () => {
                 onChangeText={setAmount}
               />
               <Text style={[styles.helperText, { color: textSecondary }]}>
-                Max eligible amount: ₦280,000 based on your savings
+                {selectedLoanProduct ? `Processing fee: ₦${selectedLoanProduct.processingFee.toLocaleString()} · Interest: ${(selectedLoanProduct.interestRate * 100).toFixed(2)}%` : 'Select a loan product to see its terms.'}
               </Text>
             </View>
 
@@ -247,7 +336,7 @@ const RequestLoanScreen = () => {
               <Text style={[styles.label, { color: textPrimary }]}>Preferred Start Date</Text>
               <TextInput
                 style={[styles.textInput, { backgroundColor: inputBg, borderColor: inputBorder, color: textPrimary }]}
-                placeholder="mm/dd/yyyy"
+                placeholder="YYYY-MM-DD"
                 placeholderTextColor={textSecondary}
                 value={startDate}
                 onChangeText={setStartDate}
@@ -264,7 +353,40 @@ const RequestLoanScreen = () => {
                 placeholder="Select Repayment Source"
                 isOpen={showRepaymentModal}
                 setIsOpen={setShowRepaymentModal}
+                isDark={isDark}
+                cardBg={cardBg}
+                inputBg={inputBg}
+                inputBorder={inputBorder}
+                textPrimary={textPrimary}
+                textSecondary={textSecondary}
+                primary={primary}
               />
+            </View>
+
+            {/* Estimated Repayment Summary (Replicating Web Loan Calculator) */}
+            <View style={[styles.calcContainer, { backgroundColor: isDark ? '#2D3748' : '#F7FAFC', borderColor: inputBorder }]}>
+              <View style={styles.calcHeader}>
+                <Ionicons name="calculator-outline" size={16} color={primary} />
+                <Text style={[styles.calcTitle, { color: textPrimary }]}>Estimated Repayment Summary</Text>
+              </View>
+              <View style={styles.calcRow}>
+                <Text style={[styles.calcLabel, { color: textSecondary }]}>Monthly Payment:</Text>
+                <Text style={[styles.calcValueHighlight, { color: primary }]}>
+                  {new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(monthlyPayment)}
+                </Text>
+              </View>
+              <View style={styles.calcRow}>
+                <Text style={[styles.calcLabel, { color: textSecondary }]}>Total Interest:</Text>
+                <Text style={[styles.calcValue, { color: textPrimary }]}>
+                  {new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(totalInterest)}
+                </Text>
+              </View>
+              <View style={[styles.calcRow, styles.calcTotalRow, { borderTopColor: inputBorder }]}>
+                <Text style={[styles.calcTotalLabel, { color: textPrimary }]}>Total Repayment:</Text>
+                <Text style={[styles.calcTotalValue, { color: textPrimary }]}>
+                  {new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(totalRepayment)}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -276,7 +398,7 @@ const RequestLoanScreen = () => {
             </View>
 
             <Text style={[styles.helperText, { color: textSecondary, marginBottom: 16 }]}>
-              You need at least up to 2 guarantors
+              {selectedLoanProduct ? `Select exactly ${selectedLoanProduct.guarantorCount} guarantor${selectedLoanProduct.guarantorCount === 1 ? '' : 's'}.` : 'Select a loan product to view its guarantor requirement.'}
             </Text>
 
             {/* Search Guarantors */}
@@ -291,34 +413,57 @@ const RequestLoanScreen = () => {
               />
             </View>
 
-            {/* Guarantors List */}
-            <View style={styles.guarantorsList}>
-              {filteredGuarantors.map((guarantor) => (
-                <View key={guarantor.id} style={[styles.guarantorItem, { borderBottomColor: inputBorder }]}>
-                  <View style={styles.guarantorInfo}>
-                    <View style={[styles.avatarCircle, { backgroundColor: primary }]}>
-                      <Text style={styles.avatarText}>{guarantor.avatar}</Text>
-                    </View>
-                    <View style={styles.guarantorDetails}>
-                      <Text style={[styles.guarantorName, { color: textPrimary }]}>{guarantor.name}</Text>
-                      <Text style={[styles.guarantorDate, { color: textSecondary }]}>
-                        {guarantor.joinDate.toLowerCase()}
-                      </Text>
-                    </View>
-                  </View>
+            {/* Guarantors List (Fixed Height and Scrollable) */}
+            <View style={[styles.guarantorsContainer, { borderColor: inputBorder, backgroundColor: inputBg }]}>
+              <ScrollView
+                style={styles.guarantorsScrollView}
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+              >
+                {filteredGuarantors.length > 0 ? (
+                  filteredGuarantors.map((guarantor) => (
+                    <TouchableOpacity
+                      key={guarantor.id}
+                      activeOpacity={0.7}
+                      style={[
+                        styles.guarantorItem,
+                        { borderBottomColor: inputBorder },
+                        guarantor.selected && { backgroundColor: isDark ? '#1E293B' : '#EFF6FF' },
+                      ]}
+                      onPress={() => toggleGuarantor(guarantor.id)}
+                    >
+                      <View style={styles.guarantorInfo}>
+                        <View style={[styles.avatarCircle, { backgroundColor: primary }]}>
+                          <Text style={styles.avatarText}>{guarantor.avatar}</Text>
+                        </View>
+                        <View style={styles.guarantorDetails}>
+                          <Text style={[styles.guarantorName, { color: textPrimary }]}>{guarantor.name}</Text>
+                          <Text style={[styles.guarantorDate, { color: textSecondary }]}>
+                            {guarantor.joinDate.toLowerCase()}
+                          </Text>
+                        </View>
+                      </View>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.checkbox,
-                      guarantor.selected && { backgroundColor: primary, borderColor: primary },
-                      { borderColor: inputBorder },
-                    ]}
-                    onPress={() => toggleGuarantor(guarantor.id)}
-                  >
-                    {guarantor.selected && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
-                  </TouchableOpacity>
-                </View>
-              ))}
+                      <View
+                        style={[
+                          styles.checkbox,
+                          guarantor.selected && { backgroundColor: primary, borderColor: primary },
+                          { borderColor: inputBorder },
+                        ]}
+                      >
+                        {guarantor.selected && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                ) : (
+                  <View style={styles.emptyGuarantors}>
+                    <Text style={[styles.emptyGuarantorsText, { color: textSecondary }]}>
+                      No guarantors found matching your search.
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
             </View>
 
             <Text style={[styles.helperText, { color: textSecondary, marginTop: 16 }]}>
@@ -327,9 +472,9 @@ const RequestLoanScreen = () => {
           </View>
 
           {/* Submit Button */}
-          <TouchableOpacity style={[styles.submitButton, { backgroundColor: primary }]} onPress={handleSubmit}>
-            <Text style={styles.submitButtonText}>Submit Application</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+          <TouchableOpacity disabled={isLoading || isSubmitting} style={[styles.submitButton, { backgroundColor: primary }, (isLoading || isSubmitting) && styles.submitButtonDisabled]} onPress={() => void handleSubmit()}>
+            <Text style={styles.submitButtonText}>{isSubmitting ? 'Submitting…' : 'Submit Application'}</Text>
+            {!isSubmitting && <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -351,6 +496,14 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     fontWeight: '500',
+    marginBottom: 16,
+  },
+  loadingIndicator: {
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 13,
     marginBottom: 16,
   },
   section: {
@@ -489,15 +642,31 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
   },
-  guarantorsList: {
-    marginTop: 12,
+  guarantorsContainer: {
+    height: 240,
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  guarantorsScrollView: {
+    flex: 1,
   },
   guarantorItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
+  },
+  emptyGuarantors: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyGuarantorsText: {
+    fontSize: 13,
   },
   guarantorInfo: {
     flexDirection: 'row',
@@ -546,9 +715,58 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 24,
   },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
   submitButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  calcContainer: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  calcHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  calcTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  calcRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  calcLabel: {
+    fontSize: 12,
+  },
+  calcValue: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  calcValueHighlight: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  calcTotalRow: {
+    marginTop: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+  },
+  calcTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  calcTotalValue: {
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

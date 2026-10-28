@@ -2,18 +2,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Dimensions,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Dimensions,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppTheme } from '@/context/ThemeContext';
+import { AccountService, type ActivityDto } from '@/services/accountService';
 
 const { width } = Dimensions.get('window');
 
@@ -26,39 +29,17 @@ interface Account {
   badgeText: string;
 }
 
-const SAMPLE_ACCOUNTS: Account[] = [
-  {
-    id: '1',
-    label: 'Savings Account',
-    balance: '₦850,000',
-    icon: 'wallet-outline',
-    color: '#173581',
-    badgeText: 'Active',
-  },
-  {
-    id: '2',
-    label: 'Shares Account',
-    balance: '₦1,200,000',
-    icon: 'trending-up-outline',
-    color: '#2B6CB0',
-    badgeText: 'Dividend Eligible',
-  },
-  {
-    id: '3',
-    label: 'Loan Balance Remaining',
-    balance: '₦400,000',
-    icon: 'cash-outline',
-    color: '#4299E1',
-    badgeText: 'Due in 15 days',
-  },
-];
-
 const DashboardScreen = () => {
   const router = useRouter();
   const { colorScheme } = useAppTheme();
   const isDark = colorScheme === 'dark';
   const [userName, setUserName] = useState('Member');
-  const [accounts, setAccounts] = useState<Account[]>(SAMPLE_ACCOUNTS);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [activities, setActivities] = useState<ActivityDto[]>([]);
+  const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
+  const [isLoadingActivities, setIsLoadingActivities] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
 
   // Theming helpers
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -87,14 +68,66 @@ const DashboardScreen = () => {
     fetchUser();
   }, []);
 
+  const loadDashboardData = useCallback(async () => {
+    setAccountsError(null);
+    try {
+      const [accountData, activitiesData] = await Promise.all([
+        AccountService.getAccounts(),
+        AccountService.getDashboardActivities().catch(() => null),
+      ]);
+
+      const accountCards = await Promise.all(accountData.map(async (account, index) => {
+        const balance = await AccountService.getAccountBalance(account.id).catch(() => null);
+        return {
+          id: account.id,
+          label: account.accountName,
+          balance: new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(balance?.balance ?? account.balance ?? 0),
+          icon: account.accountType === 'Loans' ? 'cash-outline' : account.accountType === 'Savings' ? 'wallet-outline' : 'trending-up-outline',
+          color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
+          badgeText: account.isActive ? 'Active' : 'Inactive',
+        } as Account;
+      }));
+
+      setAccounts(accountCards);
+
+      if (activitiesData?.activities) {
+        setActivities(activitiesData.activities);
+      }
+    } catch {
+      setAccounts([]);
+      setAccountsError('Unable to load your accounts. Pull down or reopen the app to try again.');
+    } finally {
+      setIsLoadingAccounts(false);
+      setIsLoadingActivities(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setIsLoadingAccounts(true);
+    setIsLoadingActivities(true);
+    void loadDashboardData();
+  }, [loadDashboardData]);
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    void loadDashboardData();
+  }, [loadDashboardData]);
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="#173581" colors={['#173581']} />
+        }
+      >
         {/* Header */}
         <View style={styles.header}>
           <View>
             <Text style={[styles.welcomeText, { color: textPrimary }]}>Welcome back, {userName}</Text>
-            <Text style={[styles.subHeaderText, { color: textSecondary }]}>Here's what's happening with your accounts today.</Text>
+            <Text style={[styles.subHeaderText, { color: textSecondary }]}>Here&apos;s what&apos;s happening with your accounts today.</Text>
           </View>
         </View>
 
@@ -105,7 +138,13 @@ const DashboardScreen = () => {
           style={styles.cardsScroll}
           contentContainerStyle={styles.cardsContainer}
         >
-          {accounts.map((account: Account) => (
+          {isLoadingAccounts ? (
+            <View style={[styles.accountLoading, { backgroundColor: cardBg }]}><ActivityIndicator color="#173581" /></View>
+          ) : accountsError ? (
+            <Text style={styles.accountError}>{accountsError}</Text>
+          ) : accounts.length === 0 ? (
+            <Text style={[styles.accountEmpty, { color: textSecondary }]}>No accounts are available for your membership.</Text>
+          ) : accounts.map((account: Account) => (
             <View key={account.id} style={[styles.accountCard, { backgroundColor: account.color }]}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconContainer}>
@@ -119,7 +158,9 @@ const DashboardScreen = () => {
               </View>
               <Text style={styles.accountLabel}>{account.label}</Text>
               <Text style={styles.accountBalance}>{account.balance}</Text>
-              <TouchableOpacity style={styles.viewDetailsButton}>
+              <TouchableOpacity
+                style={styles.viewDetailsButton}
+                onPress={() => router.push({ pathname: '/(tabs)/history', params: { accountId: account.id, accountName: account.label } })}>
                 <Text style={styles.viewDetailsText}>View Details →</Text>
               </TouchableOpacity>
             </View>
@@ -132,9 +173,9 @@ const DashboardScreen = () => {
           {[
             { name: 'Request Loan', icon: 'document-text-outline', lightBg: iconBgLight, route: '/request-loan' },
             { name: 'Make Payment', icon: 'card-outline', lightBg: iconBgMid, route: '/make-payment' },
-            { name: 'Withdraw', icon: 'arrow-up-circle-outline', lightBg: iconBgLight },
+            { name: 'Payment Requests', icon: 'receipt-outline', lightBg: iconBgLight, route: '/payment-requests' },
             { name: 'My Loans', icon: 'list-outline', lightBg: iconBgMid, route: '/loans' },
-            { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/(tabs)/guarantor-requests' },
+            { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/guarantor-requests' },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
           ].map((action, index) => (
             <TouchableOpacity
@@ -157,48 +198,43 @@ const DashboardScreen = () => {
         {/* Recent Activity */}
         <View style={styles.recentActivityHeader}>
           <Text style={[styles.sectionTitle, { color: sectionTitleColor }]}>Recent Activity</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/history')}>
             <Text style={styles.viewAllText}>View All</Text>
           </TouchableOpacity>
         </View>
 
         <View style={[styles.activityList, { backgroundColor: cardBg }]}>
-          <ActivityItem
-            title="Monthly Contribution"
-            date="Today, 10:23 AM"
-            amount="+₦50,000"
-            type="increase"
-            icon="arrow-down-outline"
-            iconColor="#3182CE"
-            isDark={isDark}
-            textPrimary={textPrimary}
-            textSecondary={textSecondary}
-            borderColor={activityBorder}
-          />
-          <ActivityItem
-            title="Loan Repayment"
-            date="Yesterday, 4:15 PM"
-            amount="-₦25,000"
-            type="decrease"
-            icon="arrow-up-outline"
-            iconColor="#C54444"
-            isDark={isDark}
-            textPrimary={textPrimary}
-            textSecondary={textSecondary}
-            borderColor={activityBorder}
-          />
-          <ActivityItem
-            title="Share Dividend"
-            date="Oct 24, 2023"
-            amount="+₦12,500"
-            type="increase"
-            icon="pie-chart-outline"
-            iconColor="#3182CE"
-            isDark={isDark}
-            textPrimary={textPrimary}
-            textSecondary={textSecondary}
-            borderColor={activityBorder}
-          />
+          {isLoadingActivities ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <ActivityIndicator color="#173581" />
+            </View>
+          ) : activities.length > 0 ? (
+            activities.slice(0, 5).map((activity, idx) => (
+              <ActivityItem
+                key={`${activity.activityType}-${activity.dateCreated}-${idx}`}
+                title={activity.activityType}
+                date={new Date(activity.dateCreated).toLocaleDateString('en-NG', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                amount={activity.details}
+                type="neutral"
+                icon="receipt-outline"
+                iconColor="#3182CE"
+                isDark={isDark}
+                textPrimary={textPrimary}
+                textSecondary={textSecondary}
+                borderColor={activityBorder}
+              />
+            ))
+          ) : (
+            <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+              <Text style={{ color: textSecondary, fontSize: 13 }}>No recent activity found</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -214,7 +250,16 @@ const ActivityItem = ({ title, date, amount, type, icon, iconColor, isDark, text
       <Text style={[styles.activityTitle, { color: textPrimary }]}>{title}</Text>
       <Text style={[styles.activityDate, { color: textSecondary }]}>{date}</Text>
     </View>
-    <Text style={[styles.activityAmount, { color: type === 'increase' ? '#3182CE' : '#C54444' }]}>
+    <Text
+      numberOfLines={1}
+      style={[
+        styles.activityAmount,
+        {
+          color: type === 'increase' ? '#3182CE' : type === 'decrease' ? '#C54444' : textSecondary,
+          maxWidth: '40%',
+          textAlign: 'right',
+        },
+      ]}>
       {amount}
     </Text>
   </View>
@@ -253,6 +298,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 16,
     flexDirection: 'row',
+  },
+  accountLoading: {
+    width: width * 0.75,
+    height: 180,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountError: {
+    width: width * 0.75,
+    color: '#DC2626',
+    fontSize: 13,
+  },
+  accountEmpty: {
+    width: width * 0.75,
+    fontSize: 13,
   },
   accountCard: {
     width: width * 0.75,

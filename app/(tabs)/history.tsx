@@ -1,95 +1,121 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { apiClient } from '@/services/httpClient';
+import { getValidAccessToken } from '@/services/authService';
+import { jwtDecode } from 'jwt-decode';
 
-// Dummy transaction data structure
 interface Transaction {
   id: string;
   transactionId: string;
   date: string;
   memberName: string;
-  type: 'Deposit' | 'Withdrawal' | 'Loan Repayment' | 'Share Contribution' | 'Dividend Payment';
+  type: string;
   amount: number;
-  status: 'Completed' | 'Pending' | 'Failed';
+  status: string;
 }
 
-const DUMMY_TRANSACTIONS: Transaction[] = [
-  {
-    id: '1',
-    transactionId: 'TXN-85720',
-    date: '2023-10-26',
-    memberName: 'Bisi Adekunle',
-    type: 'Deposit',
-    amount: 50000,
-    status: 'Completed',
-  },
-  {
-    id: '2',
-    transactionId: 'TXN-85719',
-    date: '2023-10-26',
-    memberName: 'Chinedu Okoro',
-    type: 'Loan Repayment',
-    amount: 15000,
-    status: 'Completed',
-  },
-  {
-    id: '3',
-    transactionId: 'TXN-85718',
-    date: '2023-10-25',
-    memberName: 'Amina Bello',
-    type: 'Withdrawal',
-    amount: 25000,
-    status: 'Completed',
-  },
-  {
-    id: '4',
-    transactionId: 'TXN-85717',
-    date: '2023-10-25',
-    memberName: 'Tunde Williams',
-    type: 'Share Contribution',
-    amount: 10000,
-    status: 'Pending',
-  },
-  {
-    id: '5',
-    transactionId: 'TXN-85716',
-    date: '2023-10-24',
-    memberName: 'Fatima Garba',
-    type: 'Deposit',
-    amount: 75000,
-    status: 'Completed',
-  },
-  {
-    id: '6',
-    transactionId: 'TXN-85714',
-    date: '2023-10-23',
-    memberName: 'Bisi Adekunle',
-    type: 'Withdrawal',
-    amount: 5000,
-    status: 'Failed',
-  },
-];
+interface TransactionResponse {
+  id: string;
+  referenceNo: string;
+  transactionType: string;
+  status: string;
+  amount: number;
+  transactionDate: string;
+  beneficiaryName?: string | null;
+}
+
+interface PaginatedTransactionResponse {
+  items: TransactionResponse[];
+  nextCursor?: string | null;
+}
+
+interface AccessTokenClaims {
+  realm_access?: { roles?: string[] };
+  resource_access?: Record<string, { roles?: string[] }>;
+}
 
 const TransactionHistoryScreen = () => {
-  const router = useRouter();
+  const { accountId, accountName } = useLocalSearchParams<{ accountId?: string; accountName?: string }>();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const [transactions, setTransactions] = useState<Transaction[]>(DUMMY_TRANSACTIONS);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [canViewOrganizationTransactions, setCanViewOrganizationTransactions] = useState(false);
+  const [showOrganizationTransactions, setShowOrganizationTransactions] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadTransactions = useCallback(async (lastId: string | null = null) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ pageSize: '100' });
+      if (lastId) params.set('lastId', lastId);
+      if (accountId) params.set('accountId', accountId);
+      if (showOrganizationTransactions) params.set('includeOrganizationTransactions', 'true');
+
+      const response = await apiClient.get(`/transactions?${params.toString()}`);
+      if (!response.ok) throw new Error('Unable to load transactions');
+
+      const data = await response.json() as PaginatedTransactionResponse;
+      setTransactions(data.items.map((transaction) => ({
+        id: transaction.id,
+        transactionId: transaction.referenceNo || transaction.id,
+        date: new Date(transaction.transactionDate).toLocaleDateString('en-NG'),
+        memberName: transaction.beneficiaryName || '—',
+        type: transaction.transactionType,
+        amount: transaction.amount,
+        status: transaction.status,
+      })));
+      setNextCursor(data.nextCursor ?? null);
+    } catch {
+      setTransactions([]);
+      setNextCursor(null);
+      setError('Unable to load transactions. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accountId, showOrganizationTransactions]);
+
+  useEffect(() => {
+    const checkPermissions = async () => {
+      try {
+        const token = await getValidAccessToken();
+        const claims = jwtDecode<AccessTokenClaims>(token);
+        const roles = [
+          ...(claims.realm_access?.roles ?? []),
+          ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
+        ];
+        setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
+      } catch {
+        setCanViewOrganizationTransactions(false);
+      }
+    };
+
+    void checkPermissions();
+  }, []);
+
+  useEffect(() => {
+    const loadTimer = setTimeout(() => void loadTransactions(), 0);
+    return () => clearTimeout(loadTimer);
+  }, [loadTransactions]);
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -104,6 +130,7 @@ const TransactionHistoryScreen = () => {
   // Status colors
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'Approved':
       case 'Completed':
         return '#10B981';
       case 'Pending':
@@ -112,6 +139,34 @@ const TransactionHistoryScreen = () => {
         return '#EF4444';
       default:
         return textSecondary;
+    }
+  };
+
+  const getStatusBgColor = (status: string) => {
+    switch (status) {
+      case 'Approved':
+      case 'Completed':
+        return isDark ? '#064E3B' : '#D1FAE5';
+      case 'Pending':
+        return isDark ? '#78350F' : '#FEF3C7';
+      case 'Failed':
+        return isDark ? '#7F1D1D' : '#FEE2E2';
+      default:
+        return isDark ? '#2D3748' : '#F3F4F6';
+    }
+  };
+
+  const getStatusIconName = (status: string): keyof typeof Ionicons.glyphMap => {
+    switch (status) {
+      case 'Approved':
+      case 'Completed':
+        return 'checkmark-circle';
+      case 'Pending':
+        return 'time-outline';
+      case 'Failed':
+        return 'close-circle';
+      default:
+        return 'help-circle-outline';
     }
   };
 
@@ -164,11 +219,11 @@ const TransactionHistoryScreen = () => {
 
   // Calculate totals
   const totalInflow = transactions
-    .filter((tx) => ['Deposit', 'Dividend Payment'].includes(tx.type))
+    .filter((tx) => tx.type !== 'Withdrawal')
     .reduce((sum, tx) => sum + tx.amount, 0);
 
   const totalOutflow = transactions
-    .filter((tx) => ['Withdrawal', 'Loan Repayment'].includes(tx.type))
+    .filter((tx) => tx.type === 'Withdrawal')
     .reduce((sum, tx) => sum + tx.amount, 0);
 
   const netMovement = totalInflow - totalOutflow;
@@ -183,9 +238,12 @@ const TransactionHistoryScreen = () => {
   ];
 
   const renderTransactionRow = (transaction: Transaction) => {
+    const statusColor = getStatusColor(transaction.status);
     return (
-      <View
+      <TouchableOpacity
         key={transaction.id}
+        activeOpacity={0.7}
+        onPress={() => setSelectedTransaction(transaction)}
         style={[
           styles.tableRow,
           {
@@ -193,91 +251,81 @@ const TransactionHistoryScreen = () => {
             backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
           },
         ]}>
-        <View style={[styles.tableCell, { width: 90 }]}>
-          <Text style={[styles.tableText, { color: textPrimary }]}>{transaction.date}</Text>
-        </View>
-        <View style={[styles.tableCell, { width: 120 }]}>
-          <Text style={[styles.tableText, { color: textPrimary }]} numberOfLines={1}>
-            {transaction.memberName}
+        <View style={styles.colDateRef}>
+          <Text style={[styles.dateText, { color: textPrimary }]}>{transaction.date}</Text>
+          <Text style={[styles.refText, { color: textSecondary }]} numberOfLines={1}>
+            #{transaction.transactionId}
           </Text>
         </View>
-        <View style={[styles.tableCell, { width: 130 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+
+        <View style={styles.colMemberType}>
+          <Text style={[styles.memberNameText, { color: textPrimary }]} numberOfLines={1}>
+            {transaction.memberName}
+          </Text>
+          <View style={styles.typeRow}>
             <Ionicons
               name={getTransactionIcon(transaction.type)}
-              size={12}
+              size={11}
               color={getTransactionTypeColor(transaction.type)}
             />
-            <Text
-              style={[styles.tableText, { color: textPrimary, fontSize: 11 }]}
-              numberOfLines={1}>
+            <Text style={[styles.typeText, { color: textSecondary }]} numberOfLines={1}>
               {transaction.type}
             </Text>
           </View>
         </View>
-        <View style={[styles.tableCell, { width: 100, alignItems: 'flex-end' }]}>
-          <Text style={[styles.tableText, { color: textPrimary, fontWeight: '600' }]}>
+
+        <View style={styles.colAmountStatus}>
+          <Text style={[styles.amountText, { color: textPrimary }]}>
             ₦{transaction.amount.toLocaleString()}
           </Text>
-        </View>
-        <View style={[styles.tableCell, { width: 100, alignItems: 'center' }]}>
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor:
-                  transaction.status === 'Completed'
-                    ? isDark
-                      ? '#064E3B'
-                      : '#D1FAE5'
-                    : transaction.status === 'Pending'
-                      ? isDark
-                        ? '#78350F'
-                        : '#FEF3C7'
-                      : isDark
-                        ? '#7F1D1D'
-                        : '#FEE2E2',
-              },
-            ]}>
-            <Text
-              style={[
-                styles.statusText,
-                {
-                  color: getStatusColor(transaction.status),
-                  fontWeight: '600',
-                  fontSize: 10,
-                },
-              ]}>
+          <View style={styles.statusRow}>
+            <Ionicons
+              name={getStatusIconName(transaction.status)}
+              size={12}
+              color={statusColor}
+            />
+            <Text style={[styles.compactStatusText, { color: statusColor }]}>
               {transaction.status}
             </Text>
           </View>
         </View>
-        <View style={[styles.tableCell, { width: 70, alignItems: 'center' }]}>
-          <TouchableOpacity>
-            <Text style={[styles.viewLink, { color: '#10B981' }]}>View</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={['left', 'right', 'bottom']}>
-      <Stack.Screen 
-        options={{ 
-          headerShown: true, 
-          title: 'Transaction History',
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: accountName ? `${accountName} Transactions` : 'Transaction History',
           headerTitleStyle: { fontWeight: 'bold' },
           headerTintColor: textPrimary,
           headerStyle: { backgroundColor: bg },
           headerShadowVisible: false
-        }} 
+        }}
       />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {/* Topmost description - Replicating Make Payment design */}
         <Text style={[styles.subtitle, { color: textSecondary, marginBottom: 20 }]}>
-          View, filter, and manage all financial transactions.
+          {accountName
+            ? `Viewing transactions for ${accountName}.`
+            : showOrganizationTransactions ? 'Viewing organization transactions.' : 'Viewing your transactions.'}
         </Text>
+
+        {canViewOrganizationTransactions && (
+          <TouchableOpacity
+            accessibilityRole="switch"
+            accessibilityState={{ checked: showOrganizationTransactions }}
+            onPress={() => setShowOrganizationTransactions((current) => !current)}
+            style={[styles.organizationToggle, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.organizationToggleTitle, { color: textPrimary }]}>View all organization transactions</Text>
+              <Text style={[styles.organizationToggleDescription, { color: textSecondary }]}>Includes transactions for every cooperative member.</Text>
+            </View>
+            <Ionicons name={showOrganizationTransactions ? 'toggle' : 'toggle-outline'} size={32} color={showOrganizationTransactions ? '#10B981' : textSecondary} />
+          </TouchableOpacity>
+        )}
 
         {/* Summary Cards */}
         <View style={styles.summaryContainer}>
@@ -386,64 +434,55 @@ const TransactionHistoryScreen = () => {
           </View>
         </View>
 
-        {/* Transactions Table */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.tableScrollContainer}>
-          <View style={[styles.tableContainer, { backgroundColor: cardBg }]}>
-            {/* Table Header */}
-            <View
-              style={[
-                styles.tableHeader,
-                {
-                  backgroundColor: isDark ? '#2A2A2A' : '#F9FAFB',
-                  borderBottomColor: tableBorder,
-                },
-              ]}>
-              <View style={[styles.headerCell, { width: 90 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Date</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 120 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Member Name</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 130 }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Type</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 100, alignItems: 'flex-end' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Amount</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 100, alignItems: 'center' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Status</Text>
-              </View>
-              <View style={[styles.headerCell, { width: 70, alignItems: 'center' }]}>
-                <Text style={[styles.headerText, { color: textPrimary }]}>Actions</Text>
-              </View>
-            </View>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-            {/* Table Rows */}
-            {isLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={primary} />
-              </View>
-            ) : filteredTransactions.length > 0 ? (
-              filteredTransactions.map((transaction) => renderTransactionRow(transaction))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="inbox-outline" size={48} color={textSecondary} />
-                <Text style={[styles.emptyText, { color: textSecondary }]}>No transactions found</Text>
-              </View>
-            )}
+        {/* Transactions Table (Compact, No Horizontal Scrollbar) */}
+        <View style={[styles.tableContainer, { backgroundColor: cardBg }]}>
+          {/* Table Header */}
+          <View
+            style={[
+              styles.tableHeader,
+              {
+                backgroundColor: isDark ? '#2A2A2A' : '#F9FAFB',
+                borderBottomColor: tableBorder,
+              },
+            ]}>
+            <View style={styles.colDateRef}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Date / Ref</Text>
+            </View>
+            <View style={styles.colMemberType}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Member / Type</Text>
+            </View>
+            <View style={styles.colAmountStatus}>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Amount / Status</Text>
+            </View>
           </View>
-        </ScrollView>
+
+          {/* Table Rows */}
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={primary} />
+            </View>
+          ) : filteredTransactions.length > 0 ? (
+            filteredTransactions.map((transaction) => renderTransactionRow(transaction))
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="mail-outline" size={48} color={textSecondary} />
+              <Text style={[styles.emptyText, { color: textSecondary }]}>No transactions found</Text>
+            </View>
+          )}
+        </View>
 
         {/* Pagination */}
         <View style={styles.paginationContainer}>
-          <TouchableOpacity style={styles.paginationButton}>
+          <TouchableOpacity style={styles.paginationButton} disabled>
             <Ionicons name="chevron-back" size={20} color={textSecondary} />
             <Text style={[styles.paginationText, { color: textSecondary }]}>Previous</Text>
           </TouchableOpacity>
 
-          <Text style={[styles.pageIndicator, { color: textSecondary }]}>Page 1 of 10</Text>
+          <Text style={[styles.pageIndicator, { color: textSecondary }]}>Showing up to 100 transactions</Text>
 
-          <TouchableOpacity style={styles.paginationButton}>
+          <TouchableOpacity style={styles.paginationButton} disabled={!nextCursor || isLoading} onPress={() => void loadTransactions(nextCursor)}>
             <Text style={[styles.paginationText, { color: primary }]}>Next</Text>
             <Ionicons name="chevron-forward" size={20} color={primary} />
           </TouchableOpacity>
@@ -461,6 +500,85 @@ const TransactionHistoryScreen = () => {
           <Text style={styles.exportButtonText}>Export Data</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Transaction Details Modal */}
+      <Modal
+        visible={selectedTransaction !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedTransaction(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContentCard, { backgroundColor: cardBg }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: tableBorder }]}>
+              <Text style={[styles.modalHeaderTitle, { color: textPrimary }]}>Transaction Details</Text>
+              <TouchableOpacity onPress={() => setSelectedTransaction(null)} style={styles.modalCloseButton}>
+                <Ionicons name="close" size={22} color={textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedTransaction && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
+                <View style={styles.modalStatusSection}>
+                  <View style={[styles.modalStatusIconCircle, { backgroundColor: getStatusBgColor(selectedTransaction.status) }]}>
+                    <Ionicons
+                      name={getStatusIconName(selectedTransaction.status)}
+                      size={36}
+                      color={getStatusColor(selectedTransaction.status)}
+                    />
+                  </View>
+                  <Text style={[styles.modalAmount, { color: textPrimary }]}>
+                    ₦{selectedTransaction.amount.toLocaleString()}
+                  </Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(selectedTransaction.status), marginTop: 8 }]}>
+                    <Text style={[styles.statusText, { color: getStatusColor(selectedTransaction.status), fontSize: 11 }]}>
+                      Transaction {selectedTransaction.status}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.modalDetailsList, { borderColor: inputBorder }]}>
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Member Name</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedTransaction.memberName}</Text>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Transaction Type</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons
+                        name={getTransactionIcon(selectedTransaction.type)}
+                        size={14}
+                        color={getTransactionTypeColor(selectedTransaction.type)}
+                      />
+                      <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedTransaction.type}</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Transaction Date</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedTransaction.date}</Text>
+                  </View>
+
+                  <View style={[styles.modalDetailRow, { borderBottomWidth: 0 }]}>
+                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Reference ID</Text>
+                    <Text style={[styles.modalDetailValue, { color: textPrimary, fontSize: 12 }]} numberOfLines={1}>
+                      {selectedTransaction.transactionId}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.modalDoneButton, { backgroundColor: primary }]}
+                  onPress={() => setSelectedTransaction(null)}
+                >
+                  <Text style={styles.modalDoneButtonText}>Close</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -484,6 +602,28 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     fontWeight: '400',
+  },
+  organizationToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 20,
+  },
+  organizationToggleTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  organizationToggleDescription: {
+    fontSize: 12,
+    marginTop: 3,
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 13,
+    marginBottom: 16,
   },
   summaryContainer: {
     flexDirection: 'row',
@@ -541,60 +681,180 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  tableScrollContainer: {
-    marginBottom: 24,
-  },
   tableContainer: {
     borderRadius: 8,
-    overflow: 'visible',
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 2,
-    minWidth: '100%',
+    width: '100%',
+    marginBottom: 24,
   },
   tableHeader: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
+    alignItems: 'center',
   },
-  headerCell: {
+  colDateRef: {
+    flex: 1.1,
     justifyContent: 'center',
-    paddingHorizontal: 8,
+  },
+  colMemberType: {
+    flex: 1.5,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+  },
+  colAmountStatus: {
+    flex: 1.2,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   headerText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   tableRow: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
     alignItems: 'center',
   },
-  tableCell: {
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  tableText: {
+  dateText: {
     fontSize: 12,
+    fontWeight: '600',
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+  refText: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  memberNameText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  typeRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    marginTop: 2,
   },
-  statusText: {
+  typeText: {
+    fontSize: 11,
+  },
+  amountText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 2,
+  },
+  compactStatusText: {
     fontSize: 10,
     fontWeight: '600',
   },
-  viewLink: {
-    fontSize: 12,
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContentCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  modalStatusSection: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalStatusIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  modalAmount: {
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  modalDetailsList: {
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 20,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  modalDetailLabel: {
+    fontSize: 13,
+  },
+  modalDetailValue: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalDoneButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDoneButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '600',
   },
   loadingContainer: {
