@@ -15,7 +15,8 @@ function RootLayoutNav() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack initialRouteName="login">
-        <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="index" options={{ headerShown: false, title: 'Pacesetter Cooperative' }} />
+        <Stack.Screen name="login" options={{ headerShown: false, title: 'Pacesetter Cooperative' }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="make-payment" options={{ headerShown: false }} />
         <Stack.Screen name="request-loan" options={{ headerShown: false }} />

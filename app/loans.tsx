@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Modal,
+    ActivityIndicator,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
@@ -13,36 +14,81 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import {
+    AccountService,
+    type LoanRequestDto,
+    type PaginatedLoanRequestsResponse
+} from '@/services/accountService';
 
-interface LoanApplication {
-  id: string;
-  memberName: string;
-  loanType: string;
-  amount: number;
-  status: 'Pending' | 'Approved' | 'Disbursed';
-  dueDate: string;
+type StatusTab = 'All' | 'Pending' | 'Approved' | 'Rejected' | 'Disbursed' | 'Completed';
+
+const STATUS_TABS: StatusTab[] = ['All', 'Pending', 'Approved', 'Rejected', 'Disbursed', 'Completed'];
+
+function formatDate(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-NG', { month: 'short', day: 'numeric', year: 'numeric' });
 }
-
-const DUMMY_LOANS: LoanApplication[] = [
-  { id: '1', memberName: 'Aisha Bello', loanType: 'Personal Loan', amount: 50000, status: 'Approved', dueDate: '2024-08-15' },
-  { id: '2', memberName: 'Chukwuma Eze', loanType: 'Business Loan', amount: 100000, status: 'Disbursed', dueDate: '2024-09-20' },
-  { id: '3', memberName: 'Fatima Musa', loanType: 'Emergency Loan', amount: 20000, status: 'Pending', dueDate: '2024-07-25' },
-  { id: '4', memberName: 'Ibrahim Adebayo', loanType: 'Housing Loan', amount: 200000, status: 'Approved', dueDate: '2024-10-01' },
-  { id: '5', memberName: 'Ngozi Okoro', loanType: 'Education Loan', amount: 30000, status: 'Disbursed', dueDate: '2024-08-05' },
-  { id: '6', memberName: 'Bola Adeleke', loanType: 'Personal Loan', amount: 75000, status: 'Pending', dueDate: '2024-07-30' },
-  { id: '7', memberName: 'Chioma Okafor', loanType: 'Business Loan', amount: 120000, status: 'Approved', dueDate: '2024-09-10' },
-  { id: '8', memberName: 'Tunde Williams', loanType: 'Housing Loan', amount: 150000, status: 'Disbursed', dueDate: '2024-11-15' },
-];
 
 const LoanManagementScreen = () => {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const [loans, setLoans] = useState<LoanApplication[]>(DUMMY_LOANS);
-  const [selectedLoan, setSelectedLoan] = useState<LoanApplication | null>(null);
+  const [loans, setLoans] = useState<LoanRequestDto[]>([]);
+  const [paginationData, setPaginationData] = useState<PaginatedLoanRequestsResponse | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([null]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'All' | 'Pending' | 'Approved' | 'Disbursed'>('All');
+  const [activeTab, setActiveTab] = useState<StatusTab>('All');
+
+  const fetchLoans = useCallback(async (cursor: string | null = null) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await AccountService.getLoanRequests(cursor);
+      setPaginationData(data);
+      setLoans(data.items || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load loan requests');
+      setLoans([]);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchLoans(cursorHistory[currentIndex] ?? null);
+  }, [currentIndex, fetchLoans]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    setCursorHistory([null]);
+    setCurrentIndex(0);
+    void fetchLoans(null);
+  }, [fetchLoans]);
+
+  const handleNextPage = () => {
+    const nextCursor = paginationData?.nextCursor;
+    if (paginationData?.hasNextPage && nextCursor) {
+      if (currentIndex === cursorHistory.length - 1) {
+        setCursorHistory((prev) => [...prev, nextCursor]);
+      }
+      setCurrentIndex((prev) => prev + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentIndex > 0) setCurrentIndex((prev) => prev - 1);
+  };
+
+  const isNextDisabled = !paginationData?.hasNextPage || isLoading;
+  const isPrevDisabled = currentIndex === 0 || isLoading;
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -55,52 +101,66 @@ const LoanManagementScreen = () => {
   const primary = '#173581';
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Approved':
+    switch (status?.toLowerCase()) {
+      case 'approved':
+      case 'completed':
         return '#10B981';
-      case 'Pending':
+      case 'pending':
         return '#F59E0B';
-      case 'Disbursed':
+      case 'disbursed':
         return '#3B82F6';
+      case 'rejected':
+      case 'failed':
+        return '#EF4444';
       default:
         return textSecondary;
     }
   };
 
   const getStatusBgColor = (status: string) => {
-    switch (status) {
-      case 'Approved':
+    switch (status?.toLowerCase()) {
+      case 'approved':
+      case 'completed':
         return isDark ? '#064E3B' : '#D1FAE5';
-      case 'Pending':
+      case 'pending':
         return isDark ? '#78350F' : '#FEF3C7';
-      case 'Disbursed':
+      case 'disbursed':
         return isDark ? '#0C2340' : '#DBEAFE';
+      case 'rejected':
+      case 'failed':
+        return isDark ? '#7F1D1D' : '#FEE2E2';
       default:
         return inputBg;
     }
   };
 
   const getStatusIconName = (status: string): keyof typeof Ionicons.glyphMap => {
-    switch (status) {
-      case 'Approved':
+    switch (status?.toLowerCase()) {
+      case 'approved':
+      case 'completed':
         return 'checkmark-circle';
-      case 'Pending':
+      case 'pending':
         return 'time-outline';
-      case 'Disbursed':
+      case 'disbursed':
         return 'shield-checkmark';
+      case 'rejected':
+      case 'failed':
+        return 'close-circle';
       default:
         return 'help-circle-outline';
     }
   };
 
-  // Filter loans
   const filteredLoans = loans.filter((loan) => {
+    const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
-      loan.memberName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      loan.id.toLowerCase().includes(searchQuery.toLowerCase());
-
-    const matchesStatus = activeTab === 'All' || loan.status === activeTab;
-
+      !q ||
+      (loan.applicantName || '').toLowerCase().includes(q) ||
+      (loan.loanName || '').toLowerCase().includes(q) ||
+      (loan.status || '').toLowerCase().includes(q) ||
+      loan.id.toLowerCase().includes(q);
+    const matchesStatus =
+      activeTab === 'All' || (loan.status || '').toLowerCase() === activeTab.toLowerCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -132,7 +192,11 @@ const LoanManagementScreen = () => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={primary} />}
+      >
         {/* Search Bar */}
         <View style={[styles.searchBox, { backgroundColor: cardBg, borderColor: inputBorder }]}>
           <Ionicons name="search" size={18} color={textSecondary} />
@@ -152,7 +216,7 @@ const LoanManagementScreen = () => {
 
         {/* Status Tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
-          {['All', 'Pending', 'Approved', 'Disbursed'].map((tab) => (
+          {STATUS_TABS.map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[
@@ -189,7 +253,7 @@ const LoanManagementScreen = () => {
               <Text style={[styles.headerText, { color: textPrimary }]}>Member / Type</Text>
             </View>
             <View style={styles.colDateId}>
-              <Text style={[styles.headerText, { color: textPrimary }]}>Due Date / ID</Text>
+              <Text style={[styles.headerText, { color: textPrimary }]}>Date / ID</Text>
             </View>
             <View style={styles.colAmountStatus}>
               <Text style={[styles.headerText, { color: textPrimary }]}>Amount / Status</Text>
@@ -197,7 +261,24 @@ const LoanManagementScreen = () => {
           </View>
 
           {/* Table Rows */}
-          {filteredLoans.length > 0 ? (
+          {isLoading && !isRefreshing ? (
+            <View style={styles.emptyContainer}>
+              <ActivityIndicator size="large" color={primary} />
+              <Text style={[styles.emptyText, { color: textSecondary }]}>Loading loan requests…</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
+              <Text style={[styles.emptyText, { color: textPrimary }]}>Failed to load loans</Text>
+              <Text style={[styles.emptySubText, { color: textSecondary }]}>{error}</Text>
+              <TouchableOpacity
+                style={[styles.retryButton, { backgroundColor: primary }]}
+                onPress={() => void fetchLoans(cursorHistory[currentIndex] ?? null)}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : filteredLoans.length > 0 ? (
             filteredLoans.map((loan) => {
               const statusColor = getStatusColor(loan.status);
               return (
@@ -209,11 +290,11 @@ const LoanManagementScreen = () => {
                       pathname: '/loan-details',
                       params: {
                         id: loan.id,
-                        applicantName: loan.memberName,
-                        loanName: loan.loanType,
+                        applicantName: loan.applicantName,
+                        loanName: loan.loanName,
                         amount: String(loan.amount),
                         status: loan.status,
-                        dueDate: loan.dueDate,
+                        created: loan.created,
                       },
                     })
                   }
@@ -227,25 +308,30 @@ const LoanManagementScreen = () => {
                 >
                   <View style={styles.colMemberType}>
                     <Text style={[styles.memberNameText, { color: textPrimary }]} numberOfLines={1}>
-                      {loan.memberName}
+                      {loan.applicantName}
                     </Text>
                     <Text style={[styles.typeText, { color: textSecondary }]} numberOfLines={1}>
-                      {loan.loanType}
+                      {loan.loanName}
                     </Text>
                   </View>
 
                   <View style={styles.colDateId}>
-                    <Text style={[styles.dateText, { color: textPrimary }]}>{loan.dueDate}</Text>
+                    <Text style={[styles.dateText, { color: textPrimary }]}>{formatDate(loan.created)}</Text>
                     <Text style={[styles.refText, { color: textSecondary }]} numberOfLines={1}>
-                      #LN-{loan.id}
+                      #{loan.id.slice(0, 8)}…
                     </Text>
                   </View>
 
                   <View style={styles.colAmountStatus}>
                     <Text style={[styles.amountText, { color: textPrimary }]}>
-                      ₦{loan.amount.toLocaleString()}
+                      ₦{(loan.amount ?? 0).toLocaleString()}
                     </Text>
-                    <View style={styles.statusRow}>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        { backgroundColor: getStatusBgColor(loan.status) },
+                      ]}
+                    >
                       <Ionicons
                         name={getStatusIconName(loan.status)}
                         size={12}
@@ -261,84 +347,50 @@ const LoanManagementScreen = () => {
             })
           ) : (
             <View style={styles.emptyContainer}>
-              <Ionicons name="mail-outline" size={48} color={textSecondary} />
-              <Text style={[styles.emptyText, { color: textSecondary }]}>No loans found</Text>
+              <Ionicons name="wallet-outline" size={48} color={textSecondary} />
+              <Text style={[styles.emptyText, { color: textSecondary }]}>
+                {loans.length === 0 ? 'No loan requests yet' : 'No loans match your filter'}
+              </Text>
+              {loans.length === 0 ? (
+                <Text style={[styles.emptySubText, { color: textSecondary }]}>
+                  Tap “New Loan” to submit your first loan request.
+                </Text>
+              ) : null}
             </View>
           )}
         </View>
-      </ScrollView>
 
-      {/* Loan Details Modal */}
-      <Modal
-        visible={selectedLoan !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSelectedLoan(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContentCard, { backgroundColor: cardBg }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: tableBorder }]}>
-              <Text style={[styles.modalHeaderTitle, { color: textPrimary }]}>Loan Details</Text>
-              <TouchableOpacity onPress={() => setSelectedLoan(null)} style={styles.modalCloseButton}>
-                <Ionicons name="close" size={22} color={textSecondary} />
+        {/* Pagination */}
+        {paginationData && (loans.length > 0 || currentIndex > 0) && (
+          <View style={[styles.paginationCard, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+            <View>
+              <Text style={[styles.paginationPageText, { color: textPrimary }]}>Page {currentIndex + 1}</Text>
+              <Text style={[styles.paginationTotalText, { color: textSecondary }]}>
+                {paginationData.totalItems} total request{paginationData.totalItems === 1 ? '' : 's'}
+              </Text>
+            </View>
+            <View style={styles.paginationButtonsRow}>
+              <TouchableOpacity
+                style={[styles.paginationBtn, { borderColor: inputBorder, backgroundColor: inputBg }, isPrevDisabled && styles.paginationBtnDisabled]}
+                disabled={isPrevDisabled}
+                onPress={handlePrevPage}
+              >
+                <Ionicons name="chevron-back" size={16} color={isPrevDisabled ? '#9CA3AF' : primary} />
+                <Text style={[styles.paginationBtnText, { color: isPrevDisabled ? '#9CA3AF' : primary }]}>Previous</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.paginationBtn, { borderColor: inputBorder, backgroundColor: inputBg }, isNextDisabled && styles.paginationBtnDisabled]}
+                disabled={isNextDisabled}
+                onPress={handleNextPage}
+              >
+                <Text style={[styles.paginationBtnText, { color: isNextDisabled ? '#9CA3AF' : primary }]}>Next</Text>
+                <Ionicons name="chevron-forward" size={16} color={isNextDisabled ? '#9CA3AF' : primary} />
               </TouchableOpacity>
             </View>
-
-            {selectedLoan && (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
-                <View style={styles.modalStatusSection}>
-                  <View style={[styles.modalStatusIconCircle, { backgroundColor: getStatusBgColor(selectedLoan.status) }]}>
-                    <Ionicons
-                      name={getStatusIconName(selectedLoan.status)}
-                      size={36}
-                      color={getStatusColor(selectedLoan.status)}
-                    />
-                  </View>
-                  <Text style={[styles.modalAmount, { color: textPrimary }]}>
-                    ₦{selectedLoan.amount.toLocaleString()}
-                  </Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(selectedLoan.status), marginTop: 8 }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(selectedLoan.status), fontSize: 11 }]}>
-                      Loan {selectedLoan.status}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={[styles.modalDetailsList, { borderColor: inputBorder }]}>
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Member Name</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.memberName}</Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Loan Type</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.loanType}</Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Due Date</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedLoan.dueDate}</Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomWidth: 0 }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Loan ID</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary, fontSize: 12 }]} numberOfLines={1}>
-                      #LN-{selectedLoan.id}
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.modalDoneButton, { backgroundColor: primary }]}
-                  onPress={() => setSelectedLoan(null)}
-                >
-                  <Text style={styles.modalDoneButtonText}>Close</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
           </View>
-        </View>
-      </Modal>
+        )}
+      </ScrollView>
+
     </SafeAreaView>
   );
 };
@@ -480,6 +532,15 @@ const styles = StyleSheet.create({
     gap: 3,
     marginTop: 2,
   },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
   compactStatusText: {
     fontSize: 10,
     fontWeight: '600',
@@ -498,6 +559,7 @@ const styles = StyleSheet.create({
   },
   emptyContainer: {
     paddingVertical: 40,
+    paddingHorizontal: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -505,90 +567,61 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     fontWeight: '500',
+    textAlign: 'center',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+  emptySubText: {
+    marginTop: 6,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 17,
   },
-  modalContentCard: {
-    width: '100%',
-    maxWidth: 400,
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 8,
+  retryButton: {
+    marginTop: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-  },
-  modalHeaderTitle: {
-    fontSize: 16,
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '700',
   },
-  modalCloseButton: {
-    padding: 4,
-  },
-  modalBody: {
-    padding: 20,
-  },
-  modalStatusSection: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalStatusIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  modalAmount: {
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  modalDetailsList: {
+  paginationCard: {
     borderWidth: 1,
     borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-  modalDetailRow: {
+    padding: 14,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  paginationPageText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  paginationTotalText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  paginationButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  paginationBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  modalDetailLabel: {
-    fontSize: 13,
-  },
-  modalDetailValue: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalDoneButton: {
-    paddingVertical: 12,
+    gap: 4,
+    borderWidth: 1,
     borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  modalDoneButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+  paginationBtnDisabled: {
+    opacity: 0.55,
+  },
+  paginationBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
 

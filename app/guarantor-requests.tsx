@@ -15,7 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { AccountService, type LoanGuarantorRequestDto } from '@/services/accountService';
+import {
+  AccountService,
+  type LoanGuarantorRequestDto,
+  type PaginatedGuarantorRequestsResponse
+} from '@/services/accountService';
 
 const DUMMY_REQUESTS: LoanGuarantorRequestDto[] = [
   {
@@ -65,8 +69,11 @@ export default function GuarantorRequestsScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const [requests, setRequests] = useState<LoanGuarantorRequestDto[]>(DUMMY_REQUESTS);
-  const [activeTab, setActiveTab] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('All');
+  const [requests, setRequests] = useState<LoanGuarantorRequestDto[]>([]);
+  const [paginationData, setPaginationData] = useState<PaginatedGuarantorRequestsResponse | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([null]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState<'Pending' | 'All' | 'Approved' | 'Rejected'>('Pending');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
@@ -85,15 +92,23 @@ export default function GuarantorRequestsScreen() {
   const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
   const primary = '#173581';
 
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async (cursor: string | null = null) => {
     setIsLoading(true);
     try {
-      const data = await AccountService.getGuarantorRequests();
-      if (Array.isArray(data) && data.length > 0) {
-        setRequests(data);
-      }
-    } catch {
-      // Fallback to dummy requests if offline or endpoint fails
+      const data = await AccountService.getGuarantorRequests(cursor);
+      setPaginationData(data);
+      setRequests(data.items || []);
+    } catch (err) {
+      console.warn('Failed to fetch guarantor requests from API, using fallback data:', err);
+      // Fallback to dummy data only if we don't have any requests yet
+      setRequests((prev) => (prev.length > 0 ? prev : DUMMY_REQUESTS));
+      setPaginationData((prev) => prev ?? {
+        items: DUMMY_REQUESTS,
+        hasNextPage: false,
+        hasPreviousPage: false,
+        totalItems: DUMMY_REQUESTS.length,
+        nextCursor: null,
+      });
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -101,13 +116,34 @@ export default function GuarantorRequestsScreen() {
   }, []);
 
   useEffect(() => {
-    void fetchRequests();
-  }, [fetchRequests]);
+    const cursor = cursorHistory[currentIndex] ?? null;
+    void fetchRequests(cursor);
+  }, [currentIndex, fetchRequests]);
 
   const onRefresh = () => {
     setIsRefreshing(true);
-    void fetchRequests();
+    setCursorHistory([null]);
+    setCurrentIndex(0);
+    void fetchRequests(null);
   };
+
+  const handleNextPage = () => {
+    if (paginationData?.hasNextPage && paginationData.nextCursor) {
+      if (currentIndex === cursorHistory.length - 1) {
+        setCursorHistory((prev) => [...prev, paginationData.nextCursor]);
+      }
+      setCurrentIndex((prev) => prev + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex((prev) => prev - 1);
+    }
+  };
+
+  const isNextDisabled = !paginationData?.hasNextPage || isLoading;
+  const isPrevDisabled = currentIndex === 0 || isLoading;
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -183,7 +219,7 @@ export default function GuarantorRequestsScreen() {
 
       setConfirmAction(null);
       setSelectedRequest(null);
-      void fetchRequests();
+      void fetchRequests(cursorHistory[currentIndex] ?? null);
     } catch (error) {
       Alert.alert('Action Failed', error instanceof Error ? error.message : 'Please try again later.');
     } finally {
@@ -228,7 +264,7 @@ export default function GuarantorRequestsScreen() {
 
         {/* Filter Tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
-          {['All', 'Pending', 'Approved', 'Rejected'].map((tab) => (
+          {['Pending', 'All', 'Approved', 'Rejected'].map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[
@@ -371,6 +407,76 @@ export default function GuarantorRequestsScreen() {
                 ? 'When another cooperative member selects you as a loan guarantor, their request will appear here.'
                 : `No ${activeTab.toLowerCase()} guarantor requests found.`}
             </Text>
+          </View>
+        )}
+
+        {/* Pagination Bar */}
+        {paginationData && (requests.length > 0 || currentIndex > 0) && (
+          <View style={[styles.paginationCard, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+            <View style={styles.paginationInfoContainer}>
+              <Text style={[styles.paginationPageText, { color: textPrimary }]}>
+                Page {currentIndex + 1}
+              </Text>
+              {paginationData.totalItems !== undefined && (
+                <Text style={[styles.paginationTotalText, { color: textSecondary }]}>
+                  {paginationData.totalItems} total request{paginationData.totalItems === 1 ? '' : 's'}
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.paginationButtonsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.paginationBtn,
+                  { borderColor: inputBorder, backgroundColor: inputBg },
+                  isPrevDisabled && styles.paginationBtnDisabled,
+                ]}
+                disabled={isPrevDisabled}
+                onPress={handlePrevPage}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={16}
+                  color={isPrevDisabled ? (isDark ? '#4B5563' : '#9CA3AF') : (isDark ? '#90CDF4' : primary)}
+                />
+                <Text
+                  style={[
+                    styles.paginationBtnText,
+                    { color: isDark ? '#90CDF4' : primary },
+                    isPrevDisabled && { color: isDark ? '#4B5563' : '#9CA3AF' },
+                  ]}
+                >
+                  Previous
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.paginationBtn,
+                  { borderColor: inputBorder, backgroundColor: inputBg },
+                  isNextDisabled && styles.paginationBtnDisabled,
+                ]}
+                disabled={isNextDisabled}
+                onPress={handleNextPage}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.paginationBtnText,
+                    { color: isDark ? '#90CDF4' : primary },
+                    isNextDisabled && { color: isDark ? '#4B5563' : '#9CA3AF' },
+                  ]}
+                >
+                  Next
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={isNextDisabled ? (isDark ? '#4B5563' : '#9CA3AF') : (isDark ? '#90CDF4' : primary)}
+                />
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -726,5 +832,47 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  paginationCard: {
+    marginTop: 20,
+    marginBottom: 40,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paginationInfoContainer: {
+    justifyContent: 'center',
+  },
+  paginationPageText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  paginationTotalText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  paginationButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  paginationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 4,
+  },
+  paginationBtnDisabled: {
+    opacity: 0.45,
+  },
+  paginationBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

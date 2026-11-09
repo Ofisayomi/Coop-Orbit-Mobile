@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppTheme } from '@/context/ThemeContext';
-import { AccountService, type ActivityDto } from '@/services/accountService';
+import { AccountService, type AccountDto, type AccountSummaryDto, type ActivityDto } from '@/services/accountService';
 
 const { width } = Dimensions.get('window');
 
@@ -71,27 +71,84 @@ const DashboardScreen = () => {
   const loadDashboardData = useCallback(async () => {
     setAccountsError(null);
     try {
-      const [accountData, activitiesData] = await Promise.all([
-        AccountService.getAccounts(),
-        AccountService.getDashboardActivities().catch(() => null),
+      const [dashboardStats, accountsList] = await Promise.all([
+        AccountService.getDashboardActivities(),
+        AccountService.getAccounts().catch(() => [] as AccountDto[]),
       ]);
 
-      const accountCards = await Promise.all(accountData.map(async (account, index) => {
-        const balance = await AccountService.getAccountBalance(account.id).catch(() => null);
-        return {
-          id: account.id,
-          label: account.accountName,
-          balance: new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(balance?.balance ?? account.balance ?? 0),
-          icon: account.accountType === 'Loans' ? 'cash-outline' : account.accountType === 'Savings' ? 'wallet-outline' : 'trending-up-outline',
-          color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
-          badgeText: account.isActive ? 'Active' : 'Inactive',
-        } as Account;
-      }));
+      const summaries = (dashboardStats?.accountSummaries || (dashboardStats as any)?.AccountSummaries || []) as AccountSummaryDto[];
+      const activitiesList = (dashboardStats?.activities || (dashboardStats as any)?.Activities || []) as ActivityDto[];
 
-      setAccounts(accountCards);
+      if (summaries.length > 0) {
+        const accountCards: Account[] = summaries.map((summary, index) => {
+          const name = summary.name ?? (summary as any).Name ?? '';
+          const balance = Number(summary.balance ?? (summary as any).Balance ?? 0);
+          const rawType = summary.accountType ?? (summary as any).AccountType ?? '';
 
-      if (activitiesData?.activities) {
-        setActivities(activitiesData.activities);
+          const matched = accountsList.find(
+            (acc) => acc.accountName?.trim().toLowerCase() === name.trim().toLowerCase()
+          );
+
+          const accType = (rawType || matched?.accountType || '').toLowerCase();
+          const icon = accType.includes('loan')
+            ? 'cash-outline'
+            : accType.includes('saving')
+            ? 'wallet-outline'
+            : 'trending-up-outline';
+
+          const isOutstanding = balance < 0;
+          const badgeText = isOutstanding
+            ? 'Outstanding'
+            : matched?.isActive === false
+            ? 'Inactive'
+            : 'Active';
+
+          return {
+            id: matched?.id || `summary-${index}`,
+            label: name,
+            balance: new Intl.NumberFormat('en-NG', {
+              style: 'currency',
+              currency: 'NGN',
+              maximumFractionDigits: 2,
+            }).format(Math.abs(balance)),
+            icon,
+            color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
+            badgeText,
+          };
+        });
+
+        setAccounts(accountCards);
+      } else if (accountsList.length > 0) {
+        // Fallback to accounts list if accountSummaries is empty
+        const accountCards: Account[] = accountsList.map((account, index) => {
+          const accType = (account.accountType || '').toLowerCase();
+          const icon = accType.includes('loan')
+            ? 'cash-outline'
+            : accType.includes('saving')
+            ? 'wallet-outline'
+            : 'trending-up-outline';
+
+          return {
+            id: account.id,
+            label: account.accountName,
+            balance: new Intl.NumberFormat('en-NG', {
+              style: 'currency',
+              currency: 'NGN',
+              maximumFractionDigits: 2,
+            }).format(Math.abs(account.balance ?? 0)),
+            icon,
+            color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
+            badgeText: account.isActive ? 'Active' : 'Inactive',
+          };
+        });
+
+        setAccounts(accountCards);
+      } else {
+        setAccounts([]);
+      }
+
+      if (activitiesList && activitiesList.length > 0) {
+        setActivities(activitiesList);
       }
     } catch {
       setAccounts([]);
@@ -123,6 +180,18 @@ const DashboardScreen = () => {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="#173581" colors={['#173581']} />
         }
       >
+        {/* Brand Header */}
+        {/* <View style={styles.brandContainer}>
+          <View style={styles.brandInner}>
+            <Text style={[styles.brandTitle, { color: isDark ? '#90CDF4' : '#173581' }]}>
+              Pacesetter Cooperative
+            </Text>
+            <Text style={[styles.brandSubtitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+              powered by Coop Orbit
+            </Text>
+          </View>
+        </View> */}
+
         {/* Header */}
         <View style={styles.header}>
           <View>
@@ -160,7 +229,13 @@ const DashboardScreen = () => {
               <Text style={styles.accountBalance}>{account.balance}</Text>
               <TouchableOpacity
                 style={styles.viewDetailsButton}
-                onPress={() => router.push({ pathname: '/(tabs)/history', params: { accountId: account.id, accountName: account.label } })}>
+                onPress={() => {
+                  const params: { accountName: string; accountId?: string } = { accountName: account.label };
+                  if (account.id && !account.id.startsWith('summary-')) {
+                    params.accountId = account.id;
+                  }
+                  router.push({ pathname: '/(tabs)/history', params });
+                }}>
                 <Text style={styles.viewDetailsText}>View Details →</Text>
               </TouchableOpacity>
             </View>
@@ -273,6 +348,24 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+  },
+  brandContainer: {
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  brandInner: {
+    alignItems: 'flex-end',
+  },
+  brandTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  brandSubtitle: {
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+    textAlign: 'right',
   },
   header: {
     flexDirection: 'row',

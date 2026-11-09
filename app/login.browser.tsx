@@ -486,6 +486,16 @@ const LoginScreen = () => {
               resizeMode="contain"
             />
           </View>
+          <View style={styles.brandContainer}>
+            <View style={styles.brandInner}>
+              <Text style={[styles.brandTitle, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}>
+                Pacesetter Cooperative
+              </Text>
+              <Text style={[styles.brandSubtitle, { color: colorScheme === 'dark' ? '#94A3B8' : '#64748B' }]}>
+                powered by Coop Orbit
+              </Text>
+            </View>
+          </View>
           <Text style={[styles.secureAccess, { color: colorScheme === 'dark' ? '#A0AEC0' : '#4A5568' }]}>Secure Space Access</Text>
         </View>
 
@@ -589,6 +599,26 @@ const styles = StyleSheet.create({
   logo: {
     width: 300,
     height: 200,
+  },
+  brandContainer: {
+    alignItems: 'center',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  brandInner: {
+    alignItems: 'flex-end',
+  },
+  brandTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  brandSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+    textAlign: 'right',
   },
   secureAccess: {
     fontSize: 14,

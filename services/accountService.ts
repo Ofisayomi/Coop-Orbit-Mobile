@@ -73,9 +73,43 @@ export interface LoanGuarantorRequestDto {
   status: string;
 }
 
+export interface PaginatedGuarantorRequestsResponse {
+  items: LoanGuarantorRequestDto[];
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  totalItems: number;
+  nextCursor?: string | null;
+}
+
 export interface GuarantorInfo {
   guarantorName: string;
   status: string;
+}
+
+export interface LoanRequestDto {
+  id: string;
+  amount: number;
+  comment?: string;
+  status: string;
+  created: string;
+  loanName: string;
+  applicantName: string;
+}
+
+export interface PaginatedLoanRequestsResponse {
+  items: LoanRequestDto[];
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  totalItems: number;
+  nextCursor?: string | null;
+}
+
+export interface LoanTransactionDto {
+  transactionName: string;
+  date: string;
+  amount: number;
+  status: string;
+  balance: number;
 }
 
 export interface LoanDetailDto {
@@ -98,6 +132,18 @@ export interface LoanDetailDto {
   loanDuration?: number;
   totalSavings?: number;
   guarantors: GuarantorInfo[];
+  transactions?: LoanTransactionDto[];
+}
+
+export interface RepaymentScheduleDto {
+  installmentNo: number;
+  dueDate: string;
+  principalExpected: number;
+  interestExpected: number;
+  totalExpected: number;
+  amountPaid: number;
+  balanceRemaining: number;
+  status: number;
 }
 
 export interface UserSearchDto {
@@ -152,11 +198,18 @@ export const AccountService = {
     return response.text();
   },
 
-  async getGuarantorRequests(): Promise<LoanGuarantorRequestDto[]> {
-    const response = await apiClient.get('/users/guarantor/requests');
+  async getGuarantorRequests(lastId?: string | null): Promise<PaginatedGuarantorRequestsResponse> {
+    const query = lastId ? `?lastId=${encodeURIComponent(lastId)}` : '';
+    const response = await apiClient.get(`/users/guarantor/requests${query}`);
     if (!response.ok) throw new Error('Unable to load guarantor requests');
     const data = await response.json();
-    return data.items || [];
+    return {
+      items: data.items || [],
+      hasNextPage: Boolean(data.hasNextPage),
+      hasPreviousPage: Boolean(data.hasPreviousPage),
+      totalItems: data.totalItems ?? (data.items?.length || 0),
+      nextCursor: data.nextCursor ?? null,
+    };
   },
 
   async updateGuarantorRequest(requestId: string, status: number): Promise<string> {
@@ -165,10 +218,33 @@ export const AccountService = {
     return response.text();
   },
 
+  async getLoanRequests(lastId?: string | null): Promise<PaginatedLoanRequestsResponse> {
+    const query = lastId ? `?lastId=${encodeURIComponent(lastId)}` : '';
+    const response = await apiClient.get(`/accounts/loan-request${query}`);
+    if (!response.ok) throw new Error('Unable to load loan requests');
+    const data = await response.json();
+    return {
+      items: data.items || [],
+      hasNextPage: Boolean(data.hasNextPage),
+      hasPreviousPage: Boolean(data.hasPreviousPage),
+      totalItems: data.totalItems ?? (data.items?.length || 0),
+      nextCursor: data.nextCursor ?? null,
+    };
+  },
+
   async getLoanDetail(id: string): Promise<LoanDetailDto> {
-    const response = await apiClient.get(`/loans/${id}`);
+    const response = await apiClient.get(`/loans/${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error('Unable to load loan details');
     return response.json();
+  },
+
+  // Base URL already ends in `/api`, so this resolves to
+  // GET /api/loans/repayment-schedule/{loanId}
+  async getRepaymentSchedule(loanId: string): Promise<RepaymentScheduleDto[]> {
+    const response = await apiClient.get(`/loans/repayment-schedule/${encodeURIComponent(loanId)}`);
+    if (!response.ok) throw new Error('Unable to load repayment schedule');
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async getAccountBalance(accountId: string): Promise<AccountBalanceDto | null> {

@@ -45,7 +45,11 @@ class ApiClient {
     }
 
     async request(url: string, options: RequestInit = {}): Promise<Response> {
-        const fullUrl = url.startsWith('http') ? url : `${this.baseUrl}${url}`;
+        let cleanUrl = url;
+        if (this.baseUrl.endsWith('/api') && cleanUrl.startsWith('/api/')) {
+            cleanUrl = cleanUrl.substring(4);
+        }
+        const fullUrl = cleanUrl.startsWith('http') ? cleanUrl : `${this.baseUrl}${cleanUrl}`;
 
         try {
             const authHeaders = await this.getAuthHeaders();
