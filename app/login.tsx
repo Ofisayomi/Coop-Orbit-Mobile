@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,12 +23,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { trySilentRefresh } from '@/services/authService';
+import { useToast } from '@/context/ToastContext';
+import {
+  ensureFreshTokenAfterBiometrics,
+  getStoredTokens,
+  setBiometricSessionVerified,
+  trySilentRefresh
+} from '@/services/authService';
+import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
 import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
 
 
 const LoginScreen = () => {
   const router = useRouter();
+  const { error: redirectError } = useLocalSearchParams<{ error?: string }>();
+  const { showToast } = useToast();
   const colorScheme = useColorScheme();
   
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
@@ -84,9 +93,98 @@ const LoginScreen = () => {
     restoreAuthSession();
   }, []);
 
+  // Listen for error messages from redirects (e.g. from httpClient 401 or dashboard guard)
+  const lastErrorRef = useRef<string | null>(null);
   useEffect(() => {
-    checkBiometrics();
+    if (redirectError && redirectError !== lastErrorRef.current) {
+      lastErrorRef.current = redirectError;
+      showToast(redirectError, 'error');
+    }
+  }, [redirectError, showToast]);
+
+  const hasAutoPromptedRef = useRef(false);
+
+  const performFingerprintLogin = async () => {
+    try {
+      setLoading(true);
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock with Fingerprint',
+        fallbackLabel: 'Use Password',
+        cancelLabel: 'Cancel',
+        disableDeviceFallback: false,
+      });
+
+      if (result.success) {
+        // Requirement 2: After authentication with fingerprint, if the token is about to expire,
+        // use refresh token to update token so user will not be logged out abruptly
+        const tokenResult = await ensureFreshTokenAfterBiometrics(120);
+
+        if (tokenResult.success) {
+          setBiometricSessionVerified(true);
+          void registerDeviceTokenWithBackend();
+          router.replace('/(tabs)');
+        } else {
+          showToast(
+            tokenResult.error || 'Your session has expired. Please sign in with username and password.',
+            'error'
+          );
+          setCanUseBiometrics(false);
+        }
+      } else {
+        // Fingerprint failed or was cancelled
+        if (result.error === 'user_cancel' || result.error === 'app_cancel') {
+          showToast('Fingerprint unlock cancelled. Please sign in with your credentials.', 'warning');
+        } else if (result.error === 'user_fallback') {
+          showToast('Please sign in with your username and password.', 'info');
+        } else {
+          showToast('Biometric authentication failed. Please sign in with username and password.', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('Biometric authentication error:', error);
+      showToast('Biometric authentication error. Please sign in with your credentials.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkBiometrics = useCallback(async () => {
+    try {
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      const isSupported = compatible && enrolled;
+      setIsBiometricSupported(isSupported);
+
+      const enabled = await SecureStore.getItemAsync('biometrics_enabled');
+      const isEnabled = enabled === 'true';
+      setIsBiometricEnabled(isEnabled);
+
+      const { refreshToken } = await getStoredTokens();
+      const hasStoredSession = Boolean(refreshToken);
+
+      if (isSupported && isEnabled && hasStoredSession) {
+        setCanUseBiometrics(true);
+
+        // Requirement 1: After user activates fingerprint on their device,
+        // ask for fingerprint before allowing logged in user to see their dashboard
+        if (!hasAutoPromptedRef.current) {
+          hasAutoPromptedRef.current = true;
+          setTimeout(() => {
+            void performFingerprintLogin();
+          }, 350);
+        }
+      } else {
+        setCanUseBiometrics(false);
+      }
+    } catch (err) {
+      console.error('Error checking biometrics:', err);
+      setCanUseBiometrics(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void checkBiometrics();
+  }, [checkBiometrics]);
 
   // Helper function to generate a random string for PKCE
   const generateRandomString = (length: number) => {
@@ -120,32 +218,6 @@ const LoginScreen = () => {
       SecureStore.deleteItemAsync('oauth_state'),
       SecureStore.deleteItemAsync('code_verifier'),
     ]);
-  };
-
-  const checkBiometrics = async () => {
-    const compatible = await LocalAuthentication.hasHardwareAsync();
-    const enrolled = await LocalAuthentication.isEnrolledAsync();
-    const isSupported = compatible && enrolled;
-    setIsBiometricSupported(isSupported);
-
-    const enabled = await SecureStore.getItemAsync('biometrics_enabled');
-    const isEnabled = enabled === 'true';
-    setIsBiometricEnabled(isEnabled);
-
-    if (isSupported && isEnabled) {
-      setLoading(true);
-      try {
-        const canRefresh = await trySilentRefresh();
-        setCanUseBiometrics(canRefresh);
-      } catch (err) {
-        console.error('Error checking silent refresh:', err);
-        setCanUseBiometrics(false);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setCanUseBiometrics(false);
-    }
   };
 
   const handleOAuthCallback = async (code: string) => {
@@ -188,12 +260,7 @@ const LoginScreen = () => {
       setShowWebView(false);
       await cleanupAuthSession();
       setLoading(false);
-
-      Alert.alert(
-        'Authentication Error',
-        'Failed to complete authentication. Please try again.',
-        [{ text: 'OK' }]
-      );
+      showToast('Authentication failed. Please try again.', 'error');
     }
   };
 
@@ -232,6 +299,8 @@ const LoginScreen = () => {
       });
     }
 
+    setBiometricSessionVerified(true);
+    void registerDeviceTokenWithBackend();
     router.replace('/(tabs)');
   };
 
@@ -268,7 +337,7 @@ const LoginScreen = () => {
     } catch (error) {
       console.error('OAuth error:', error);
       setLoading(false);
-      Alert.alert('Error', 'Could not initialize login flow.');
+      showToast('Could not initialize login flow. Please try again.', 'error');
     }
   };
 
@@ -284,36 +353,13 @@ const LoginScreen = () => {
       } else if (parsed.queryParams?.error) {
         setShowWebView(false);
         setLoading(false);
-        Alert.alert('Auth Failed', parsed.queryParams.error as string);
+        showToast(`Authentication failed: ${parsed.queryParams.error}`, 'error');
       }
     }
   };
 
   const onFingerprintLogin = async () => {
-    try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Login with Biometrics',
-        fallbackLabel: 'Use Passcode',
-      });
-
-      if (result.success) {
-        setLoading(true);
-        try {
-          const isAuthenticated = await trySilentRefresh();
-          if (isAuthenticated) {
-            router.replace('/(tabs)');
-          } else {
-            Alert.alert('Session Expired', 'Please log in with your credentials.');
-          }
-        } catch (authError) {
-          Alert.alert('Session Expired', 'Please log in with your credentials.');
-        } finally {
-          setLoading(false);
-        }
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Biometric authentication failed.');
-    }
+    await performFingerprintLogin();
   };
 
   const logoSource = colorScheme === 'dark' 

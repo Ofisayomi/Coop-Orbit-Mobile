@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 
 import { getValidAccessToken, logout } from './authService';
+import { showGlobalToast } from '@/context/ToastContext';
 
 type RequestInterceptor = (config: RequestInit & { url: string }) => Promise<RequestInit & { url: string }>;
 type ResponseInterceptor = (response: Response, config: RequestInit & { url: string }) => Promise<Response>;
@@ -29,19 +30,23 @@ class ApiClient {
         } catch (error) {
             // Token refresh failed - logout and redirect to login
             console.error('Failed to get valid access token, redirecting to login:', error);
-            await this.handleAuthFailure();
+            await this.handleAuthFailure('Session expired. Please sign in with your credentials.');
             throw error;
         }
     }
 
-    private async handleAuthFailure(): Promise<void> {
+    private async handleAuthFailure(errorMessage = 'Session expired. Please sign in with your credentials.'): Promise<void> {
         try {
             await logout();
         } catch (error) {
             console.error('Error during logout on auth failure:', error);
         }
+        showGlobalToast(errorMessage, 'error');
         // Redirect to login screen
-        router.replace('/login');
+        router.replace({
+            pathname: '/login',
+            params: { error: errorMessage },
+        });
     }
 
     async request(url: string, options: RequestInit = {}): Promise<Response> {
@@ -84,13 +89,13 @@ class ApiClient {
 
                     if (retryResponse.status === 401) {
                         // Still 401 after refresh, auth has fully failed
-                        await this.handleAuthFailure();
+                        await this.handleAuthFailure('Authentication expired. Please sign in again.');
                         throw new Error('Authentication failed after token refresh');
                     }
 
                     return retryResponse;
                 } catch (refreshError) {
-                    await this.handleAuthFailure();
+                    await this.handleAuthFailure('Session expired. Please sign in with your credentials.');
                     throw refreshError;
                 }
             }

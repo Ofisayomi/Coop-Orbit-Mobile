@@ -5,6 +5,7 @@ import { jwtDecode } from 'jwt-decode';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Dimensions,
   RefreshControl,
   ScrollView,
@@ -17,6 +18,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppTheme } from '@/context/ThemeContext';
 import { AccountService, type AccountDto, type AccountSummaryDto, type ActivityDto } from '@/services/accountService';
+import {
+  getStoredTokens,
+  isBiometricSessionVerified,
+  setBiometricSessionVerified
+} from '@/services/authService';
+import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
 
 const { width } = Dimensions.get('window');
 
@@ -53,20 +60,53 @@ const DashboardScreen = () => {
   const quickActionLabelColor = isDark ? '#A0AEC0' : '#4A5568';
 
   useEffect(() => {
-    const fetchUser = async () => {
+    const verifyDashboardAccess = async () => {
       try {
-        const token = await SecureStore.getItemAsync('access_token');
+        const { refreshToken, accessToken } = await getStoredTokens();
+        if (!refreshToken && !accessToken) {
+          router.replace({
+            pathname: '/login',
+            params: { error: 'Please sign in to access your dashboard.' },
+          });
+          return;
+        }
+
+        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
+        if (biometricsEnabled === 'true' && !isBiometricSessionVerified()) {
+          router.replace('/login');
+          return;
+        }
+
+        const token = accessToken || (await SecureStore.getItemAsync('access_token'));
         if (token) {
           const decoded = jwtDecode<any>(token);
           const name = decoded.name || decoded.preferred_username || decoded.given_name || 'Member';
           setUserName(name);
+          void registerDeviceTokenWithBackend();
         }
       } catch (error) {
-        console.error('Error decoding token:', error);
+        console.error('Error verifying dashboard access:', error);
       }
     };
-    fetchUser();
-  }, []);
+
+    void verifyDashboardAccess();
+
+    const subscription = AppState.addEventListener('change', async (nextState) => {
+      if (nextState === 'background') {
+        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
+        if (biometricsEnabled === 'true') {
+          setBiometricSessionVerified(false);
+        }
+      } else if (nextState === 'active') {
+        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
+        if (biometricsEnabled === 'true' && !isBiometricSessionVerified()) {
+          router.replace('/login');
+        }
+      }
+    });
+
+    return () => subscription.remove();
+  }, [router]);
 
   const loadDashboardData = useCallback(async () => {
     setAccountsError(null);
@@ -251,6 +291,7 @@ const DashboardScreen = () => {
             { name: 'Payment Requests', icon: 'receipt-outline', lightBg: iconBgLight, route: '/payment-requests' },
             { name: 'My Loans', icon: 'list-outline', lightBg: iconBgMid, route: '/loans' },
             { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/guarantor-requests' },
+            { name: 'Reports', icon: 'bar-chart-outline', lightBg: iconBgLight, route: '/(tabs)/reports' },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
           ].map((action, index) => (
             <TouchableOpacity

@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { apiClient } from '@/services/httpClient';
+import { apiClient } from '@/services/http-client';
 
 export interface PaymentRequestAccountDto {
   accountId: string;

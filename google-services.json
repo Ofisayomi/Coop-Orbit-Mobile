@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "772174131446",
+    "project_id": "coop-orbit",
+    "storage_bucket": "coop-orbit.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:772174131446:android:5d7c066746fa90246efcd7",
+        "android_client_info": {
+          "package_name": "com.onersofties.coopassistmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCcTj2Fx0bihdXPa2PYAMo7WJnJ1auR-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,9 +1,12 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import React, { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AppThemeProvider, useAppTheme } from '@/context/ThemeContext';
+import { ToastProvider } from '@/context/ToastContext';
+import { setupAppNotificationListeners } from '@/services/expo-notification';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -11,6 +14,13 @@ export const unstable_settings = {
 
 function RootLayoutNav() {
   const { colorScheme } = useAppTheme();
+
+  useEffect(() => {
+    const unsubscribe = setupAppNotificationListeners();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -34,7 +44,9 @@ function RootLayoutNav() {
 export default function RootLayout() {
   return (
     <AppThemeProvider>
-      <RootLayoutNav />
+      <ToastProvider>
+        <RootLayoutNav />
+      </ToastProvider>
     </AppThemeProvider>
   );
 }

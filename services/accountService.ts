@@ -1,4 +1,4 @@
-import { apiClient } from './httpClient';
+import { apiClient } from './http-client';
 
 export interface AccountDto {
   id: string;

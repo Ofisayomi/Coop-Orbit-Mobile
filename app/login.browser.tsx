@@ -22,7 +22,8 @@ import {
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { trySilentRefresh } from '@/services/authService';
+import { ensureFreshTokenAfterBiometrics, setBiometricSessionVerified, trySilentRefresh } from '@/services/authService';
+import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
 // import { authorize } from 'react-native-app-auth';
 import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
 
@@ -339,6 +340,8 @@ const LoginScreen = () => {
       });
     }
 
+    setBiometricSessionVerified(true);
+    void registerDeviceTokenWithBackend();
     router.replace('/(tabs)');
   };
 
@@ -438,16 +441,15 @@ const LoginScreen = () => {
       if (result.success) {
         setLoading(true);
         try {
-          // Step 2: Retrieve the refresh token from Secure Hardware storage
-          // Step 3: Send refresh token to Keycloak for a fresh access token (silent refresh)
-          const isAuthenticated = await trySilentRefresh();
-          if (isAuthenticated) {
-            // Step 4: Keycloak returned a fresh access token — navigate to dashboard
+          const tokenResult = await ensureFreshTokenAfterBiometrics(120);
+          if (tokenResult.success) {
+            setBiometricSessionVerified(true);
+            void registerDeviceTokenWithBackend();
             router.replace('/(tabs)');
           } else {
             Alert.alert(
               'Session Expired',
-              'Your session has expired. Please log in with your credentials.',
+              tokenResult.error || 'Your session has expired. Please log in with your credentials.',
               [{ text: 'OK' }]
             );
           }

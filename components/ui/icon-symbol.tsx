@@ -21,6 +21,7 @@ const MAPPING = {
   'gearshape.fill': 'settings',
   'list.bullet': 'format-list-bulleted',
   'clock.fill': 'history',
+  'chart.bar.fill': 'bar-chart',
 } as IconMapping;
 
 /**

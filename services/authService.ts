@@ -125,6 +125,7 @@ export async function logout(): Promise<void> {
         // Always clear local tokens
         await SecureStore.deleteItemAsync('access_token');
         await SecureStore.deleteItemAsync('refresh_token');
+        setBiometricSessionVerified(false);
     }
 }
 
@@ -148,5 +149,72 @@ export async function trySilentRefresh(): Promise<boolean> {
         return true;
     } catch {
         return false;
+    }
+}
+
+let _isBiometricVerifiedInSession = false;
+
+export function isBiometricSessionVerified(): boolean {
+    return _isBiometricVerifiedInSession;
+}
+
+export function setBiometricSessionVerified(verified: boolean): void {
+    _isBiometricVerifiedInSession = verified;
+}
+
+/**
+ * Verifies and proactively refreshes the access token after biometric authentication.
+ * If the current token is missing, expired, or expiring within thresholdSeconds (default 120s),
+ * it calls Keycloak using the refresh token to acquire a fresh access token so that
+ * the user will not be logged out abruptly while using the app.
+ */
+export async function ensureFreshTokenAfterBiometrics(thresholdSeconds = 120): Promise<{
+    success: boolean;
+    refreshed: boolean;
+    error?: string;
+}> {
+    try {
+        const { refreshToken, accessToken } = await getStoredTokens();
+
+        if (!refreshToken) {
+            setBiometricSessionVerified(false);
+            return {
+                success: false,
+                refreshed: false,
+                error: 'No active session found. Please sign in with your username and password.',
+            };
+        }
+
+        // Check if access token is missing, expired, or about to expire within thresholdSeconds
+        const needsRefresh = !accessToken || isTokenExpiredOrExpiring(accessToken, thresholdSeconds);
+
+        if (needsRefresh) {
+            try {
+                await refreshAccessToken();
+                setBiometricSessionVerified(true);
+                return { success: true, refreshed: true };
+            } catch (refreshErr) {
+                console.error('Failed to refresh token after biometrics:', refreshErr);
+                await logout();
+                setBiometricSessionVerified(false);
+                return {
+                    success: false,
+                    refreshed: false,
+                    error: 'Your session has expired. Please sign in with your credentials.',
+                };
+            }
+        }
+
+        // Current access token is still valid
+        setBiometricSessionVerified(true);
+        return { success: true, refreshed: false };
+    } catch (err) {
+        console.error('Unexpected error in ensureFreshTokenAfterBiometrics:', err);
+        setBiometricSessionVerified(false);
+        return {
+            success: false,
+            refreshed: false,
+            error: 'Authentication verification failed. Please sign in with your credentials.',
+        };
     }
 }

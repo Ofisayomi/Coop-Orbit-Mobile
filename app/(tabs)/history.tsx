@@ -14,7 +14,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { apiClient } from '@/services/httpClient';
+import {
+  memberDisplayName,
+  TransactionService,
+  type MemberSearchResult,
+} from '@/services/transaction-service';
 import { getValidAccessToken } from '@/services/authService';
 import { jwtDecode } from 'jwt-decode';
 
@@ -28,19 +32,9 @@ interface Transaction {
   status: string;
 }
 
-interface TransactionResponse {
+interface SelectedMember {
   id: string;
-  referenceNo: string;
-  transactionType: string;
-  status: string;
-  amount: number;
-  transactionDate: string;
-  beneficiaryName?: string | null;
-}
-
-interface PaginatedTransactionResponse {
-  items: TransactionResponse[];
-  nextCursor?: string | null;
+  label: string;
 }
 
 interface AccessTokenClaims {
@@ -59,6 +53,13 @@ const TransactionHistoryScreen = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [canViewOrganizationTransactions, setCanViewOrganizationTransactions] = useState(false);
+  // Only Admin/Accountant may search for a particular member's transactions (enforced by the API too).
+  const [canSearchMemberTransactions, setCanSearchMemberTransactions] = useState(false);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberResults, setMemberResults] = useState<MemberSearchResult[]>([]);
+  const [selectedMember, setSelectedMember] = useState<SelectedMember | null>(null);
+  const [isSearchingMembers, setIsSearchingMembers] = useState(false);
+  const [memberSearchError, setMemberSearchError] = useState<string | null>(null);
   const [showOrganizationTransactions, setShowOrganizationTransactions] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,16 +67,13 @@ const TransactionHistoryScreen = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ pageSize: '100' });
-      if (lastId) params.set('lastId', lastId);
-      if (accountId) params.set('accountId', accountId);
-      if (showOrganizationTransactions) params.set('includeOrganizationTransactions', 'true');
-
-      const response = await apiClient.get(`/transactions?${params.toString()}`);
-      if (!response.ok) throw new Error('Unable to load transactions');
-
-      const data = await response.json() as PaginatedTransactionResponse;
-      setTransactions(data.items.map((transaction) => ({
+      const data = await TransactionService.getTransactions({
+        lastId,
+        accountId,
+        includeOrganizationTransactions: showOrganizationTransactions,
+        memberId: selectedMember?.id ?? null,
+      });
+      setTransactions((data?.items || []).map((transaction) => ({
         id: transaction.id,
         transactionId: transaction.referenceNo || transaction.id,
         date: new Date(transaction.transactionDate).toLocaleDateString('en-NG'),
@@ -92,7 +90,42 @@ const TransactionHistoryScreen = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [accountId, showOrganizationTransactions]);
+  }, [accountId, showOrganizationTransactions, selectedMember]);
+
+  // Debounced member lookup for the Admin/Accountant member picker.
+  useEffect(() => {
+    if (!canSearchMemberTransactions || selectedMember) return;
+    const query = memberQuery.trim();
+    if (query.length < 2) {
+      setMemberResults([]);
+      setMemberSearchError(null);
+      return;
+    }
+    let cancelled = false;
+    setIsSearchingMembers(true);
+    const timer = setTimeout(() => {
+      void TransactionService.searchMembers(query)
+        .then((members) => {
+          if (!cancelled) {
+            setMemberResults(members);
+            setMemberSearchError(null);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setMemberResults([]);
+            setMemberSearchError('Unable to search members. Please try again.');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setIsSearchingMembers(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [canSearchMemberTransactions, memberQuery, selectedMember]);
 
   useEffect(() => {
     const checkPermissions = async () => {
@@ -104,8 +137,10 @@ const TransactionHistoryScreen = () => {
           ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
         ];
         setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
+        setCanSearchMemberTransactions(roles.some((role) => ['Admin', 'Accountant'].includes(role)));
       } catch {
         setCanViewOrganizationTransactions(false);
+        setCanSearchMemberTransactions(false);
       }
     };
 
@@ -308,9 +343,11 @@ const TransactionHistoryScreen = () => {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {/* Topmost description - Replicating Make Payment design */}
         <Text style={[styles.subtitle, { color: textSecondary, marginBottom: 20 }]}>
-          {accountName
-            ? `Viewing transactions for ${accountName}.`
-            : showOrganizationTransactions ? 'Viewing organization transactions.' : 'Viewing your transactions.'}
+          {selectedMember
+            ? `Viewing transactions for ${selectedMember.label}.`
+            : accountName
+              ? `Viewing transactions for ${accountName}.`
+              : showOrganizationTransactions ? 'Viewing organization transactions.' : 'Viewing your transactions.'}
         </Text>
 
         {canViewOrganizationTransactions && (
@@ -325,6 +362,80 @@ const TransactionHistoryScreen = () => {
             </View>
             <Ionicons name={showOrganizationTransactions ? 'toggle' : 'toggle-outline'} size={32} color={showOrganizationTransactions ? '#10B981' : textSecondary} />
           </TouchableOpacity>
+        )}
+
+        {canSearchMemberTransactions && (
+          <View style={[styles.memberSearchCard, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+            <Text style={[styles.organizationToggleTitle, { color: textPrimary }]}>Search a member's transactions</Text>
+            <Text style={[styles.organizationToggleDescription, { color: textSecondary }]}>
+              Available to Admin and Accountant roles. Pick a member to view only their transactions.
+            </Text>
+            {selectedMember ? (
+              <View style={styles.selectedMemberRow}>
+                <Text style={[styles.selectedMemberLabel, { color: textSecondary }]}>Viewing</Text>
+                <View style={styles.selectedMemberChip}>
+                  <Text style={styles.selectedMemberChipText}>{selectedMember.label}</Text>
+                  <TouchableOpacity
+                    accessibilityLabel="Clear selected member"
+                    onPress={() => {
+                      setSelectedMember(null);
+                      setMemberQuery('');
+                      setMemberResults([]);
+                    }}>
+                    <Ionicons name="close-circle" size={18} color="#1E40AF" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <>
+                <View style={[styles.searchContainer, { backgroundColor: inputBg, borderColor: inputBorder, marginTop: 12 }]}>
+                  <Ionicons name="search-outline" size={16} color={textSecondary} />
+                  <TextInput
+                    style={[styles.searchInput, { color: textPrimary }]}
+                    placeholder="Type a member name, email, phone, or membership ID..."
+                    placeholderTextColor={textSecondary}
+                    value={memberQuery}
+                    onChangeText={setMemberQuery}
+                    autoCapitalize="none"
+                  />
+                  {memberQuery ? (
+                    <TouchableOpacity onPress={() => setMemberQuery('')}>
+                      <Ionicons name="close-circle" size={16} color={textSecondary} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {memberSearchError ? <Text style={styles.memberSearchError}>{memberSearchError}</Text> : null}
+                {isSearchingMembers ? (
+                  <View style={styles.memberSearchingRow}>
+                    <ActivityIndicator size="small" color={primary} />
+                    <Text style={[styles.memberSearchHint, { color: textSecondary }]}>Searching members…</Text>
+                  </View>
+                ) : null}
+                {!isSearchingMembers && memberQuery.trim().length >= 2 && memberResults.length === 0 && !memberSearchError ? (
+                  <Text style={[styles.memberSearchHint, { color: textSecondary, marginTop: 8 }]}>
+                    {`No members match "${memberQuery.trim()}".`}
+                  </Text>
+                ) : null}
+                {memberResults.map((member) => (
+                  <TouchableOpacity
+                    key={member.id}
+                    style={[styles.memberResultRow, { borderBottomColor: inputBorder }]}
+                    onPress={() => {
+                      setSelectedMember({ id: member.id, label: memberDisplayName(member) });
+                      setMemberResults([]);
+                    }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.memberNameText, { color: textPrimary }]}>{memberDisplayName(member)}</Text>
+                      {member.emailAddress ? (
+                        <Text style={[styles.typeText, { color: textSecondary }]}>{member.emailAddress}</Text>
+                      ) : null}
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={textSecondary} />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </View>
         )}
 
         {/* Summary Cards */}
@@ -482,9 +593,14 @@ const TransactionHistoryScreen = () => {
 
           <Text style={[styles.pageIndicator, { color: textSecondary }]}>Showing up to 100 transactions</Text>
 
-          <TouchableOpacity style={styles.paginationButton} disabled={!nextCursor || isLoading} onPress={() => void loadTransactions(nextCursor)}>
-            <Text style={[styles.paginationText, { color: primary }]}>Next</Text>
-            <Ionicons name="chevron-forward" size={20} color={primary} />
+          <TouchableOpacity
+            style={styles.paginationButton}
+            disabled={!nextCursor || isLoading}
+            onPress={() => void loadTransactions(nextCursor)}>
+            <Text style={[styles.paginationText, { color: !nextCursor || isLoading ? textSecondary : primary }]}>
+              Next
+            </Text>
+            <Ionicons name="chevron-forward" size={20} color={!nextCursor || isLoading ? textSecondary : primary} />
           </TouchableOpacity>
         </View>
 
@@ -619,6 +735,59 @@ const styles = StyleSheet.create({
   organizationToggleDescription: {
     fontSize: 12,
     marginTop: 3,
+  },
+  memberSearchCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 20,
+  },
+  selectedMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  selectedMemberLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  selectedMemberChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+  },
+  selectedMemberChipText: {
+    color: '#1E40AF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  memberSearchError: {
+    color: '#DC2626',
+    fontSize: 12,
+    marginTop: 6,
+  },
+  memberSearchingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingVertical: 4,
+  },
+  memberSearchHint: {
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  memberResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
   },
   errorText: {
     color: '#DC2626',
