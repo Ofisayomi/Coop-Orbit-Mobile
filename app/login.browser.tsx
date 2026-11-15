@@ -7,17 +7,17 @@ import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    AppState,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  AppState,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 import { Colors } from '@/constants/theme';
@@ -37,7 +37,8 @@ const LoginScreen = () => {
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
   const [canUseBiometrics, setCanUseBiometrics] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+  const [orgName, setOrgName] = useState("");
+
   // Track app lifecycle for 2FA handling
   const appState = useRef(AppState.currentState);
   const authStartTimeRef = useRef<number | null>(null);
@@ -51,17 +52,19 @@ const LoginScreen = () => {
     if (Platform.OS === 'android') {
       WebBrowser.warmUpAsync();
     }
-    
+
     // Add app state listener to handle backgrounding
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (
-        appState.current.match(/inactive|background/) &&
+        appState?.current?.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
         console.log('App has come to the foreground!');
       }
       appState.current = nextAppState;
     });
+
+    setOrgName(SecureStore.getItem("org_name") ?? "");
 
     return () => {
       if (Platform.OS === 'android') {
@@ -143,7 +146,7 @@ const LoginScreen = () => {
   useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
       console.log('Deep link received:', url);
-      
+
       const parsed = Linking.parse(url);
       const code = parsed.queryParams?.code as string;
       const state = parsed.queryParams?.state as string;
@@ -241,7 +244,7 @@ const LoginScreen = () => {
   const handleOAuthCallback = async (code: string) => {
     if (isProcessingCallbackRef.current) return;
     isProcessingCallbackRef.current = true;
-    
+
     try {
       // Ensure we have the code verifier
       let verifier = codeVerifierRef.current;
@@ -350,7 +353,7 @@ const LoginScreen = () => {
     setLoading(true);
     authStartTimeRef.current = Date.now();
     isProcessingCallbackRef.current = false;
-    
+
     try {
       // Generate PKCE parameters
       const { codeVerifier, codeChallenge } = await generatePKCE();
@@ -431,6 +434,21 @@ const LoginScreen = () => {
 
   const onFingerprintLogin = async () => {
     try {
+      // Step 0: Validate the stored session BEFORE showing the fingerprint
+      // modal, so a dead session goes straight to credential login instead
+      // of failing after a successful biometric challenge.
+      setLoading(true);
+      const hasSession = await trySilentRefresh();
+      if (!hasSession) {
+        setCanUseBiometrics(false);
+        Alert.alert(
+          'Session Expired',
+          'Your session has expired. Please log in with your credentials.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
       // Step 1: Prompt for biometric authentication
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Login with Biometrics',
@@ -470,8 +488,8 @@ const LoginScreen = () => {
     }
   };
 
-  const logoSource = colorScheme === 'dark' 
-    ? require('@/assets/images/splash.png') 
+  const logoSource = colorScheme === 'dark'
+    ? require('@/assets/images/splash.png')
     : require('@/assets/images/logo_light.png');
 
   return (
@@ -491,10 +509,10 @@ const LoginScreen = () => {
           <View style={styles.brandContainer}>
             <View style={styles.brandInner}>
               <Text style={[styles.brandTitle, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}>
-                Pacesetter Cooperative
+                {orgName}
               </Text>
               <Text style={[styles.brandSubtitle, { color: colorScheme === 'dark' ? '#94A3B8' : '#64748B' }]}>
-                powered by Coop Orbit
+                {/* powered by Coop Orbit */}
               </Text>
             </View>
           </View>
@@ -557,8 +575,8 @@ const LoginScreen = () => {
               <View style={styles.loadingContent}>
                 <ActivityIndicator color="#fff" />
                 <Text style={styles.loadingText}>
-                  {authStartTimeRef.current && Date.now() - authStartTimeRef.current > 3000 
-                    ? 'Waiting for 2FA...' 
+                  {authStartTimeRef.current && Date.now() - authStartTimeRef.current > 3000
+                    ? 'Waiting for 2FA...'
                     : 'Signing In...'}
                 </Text>
               </View>

@@ -154,6 +154,12 @@ export interface UserSearchDto {
   email?: string | null;
 }
 
+export interface OrganizationDto {
+  id: string;
+  organizationName: string;
+  organizationType: string;
+}
+
 export const AccountService = {
   async getAccounts(): Promise<AccountDto[]> {
     return readJson<AccountDto[]>(await apiClient.get('/accounts'));
@@ -279,4 +285,10 @@ export const AccountService = {
     if (!response.ok) throw new Error((await response.text()) || 'Unable to submit loan request');
     return response.text();
   },
+
+  async getOrganizationInfo(): Promise<OrganizationDto | null> {
+    const response = await apiClient.get(`/organizations`);
+    if (response.status === 404) return null;
+    return readJson<OrganizationDto>(response);
+  }
 };

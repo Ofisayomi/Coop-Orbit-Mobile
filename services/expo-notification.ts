@@ -23,7 +23,7 @@ export type NotificationPayload = Record<string, unknown>;
 // Configure foreground notification behavior
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
-        shouldShowAlert: true,
+        // shouldShowAlert: true,
         shouldPlaySound: true,
         shouldSetBadge: false,
         shouldShowList: true,

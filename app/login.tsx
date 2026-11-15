@@ -22,8 +22,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/context/ToastContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { AccountService } from '@/services/accountService';
 import {
   ensureFreshTokenAfterBiometrics,
   getStoredTokens,
@@ -39,27 +40,39 @@ const LoginScreen = () => {
   const { error: redirectError } = useLocalSearchParams<{ error?: string }>();
   const { showToast } = useToast();
   const colorScheme = useColorScheme();
-  
+
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
   const [canUseBiometrics, setCanUseBiometrics] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   // WebView state
   const [showWebView, setShowWebView] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [orgName, setOrgName] = useState("");
 
   // Track app lifecycle
   const appState = useRef(AppState.currentState);
   const oauthStateRef = useRef<string | null>(null);
   const codeVerifierRef = useRef<string | null>(null);
   const isProcessingCallbackRef = useRef(false);
+  const isPromptingRef = useRef(false);
+  const showWebViewRef = useRef(false);
+  // Latest Keycloak page the WebView is on (e.g. the OTP screen). Restored
+  // after backgrounding so the user resumes mid-flow instead of restarting
+  // at the username screen.
+  const currentUrlRef = useRef<string | null>(null);
+  // Bumped to remount the WebView if iOS kills its content process while
+  // the app is backgrounded.
+  const [webViewKey, setWebViewKey] = useState(0);
 
   useEffect(() => {
     // Add app state listener
     const subscription = AppState.addEventListener('change', nextAppState => {
       appState.current = nextAppState;
     });
+
+    setOrgName(SecureStore.getItem('org_name') ?? '');
 
     return () => {
       subscription.remove();
@@ -76,21 +89,63 @@ const LoginScreen = () => {
     path: 'oauth'
   });
 
-  // Restore OAuth session state on mount
+  // How long a login left hanging (e.g. user switched to the authenticator
+  // app for a 2FA code and the OS killed ours) is still resumed instead of
+  // dropped. Matches the 10-minute OAuth timeout in login.browser.tsx.
+  const OAUTH_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+
+  const cleanupAuthSession = async () => {
+    oauthStateRef.current = null;
+    codeVerifierRef.current = null;
+    currentUrlRef.current = null;
+    isProcessingCallbackRef.current = false;
+    await Promise.all([
+      SecureStore.deleteItemAsync('oauth_state'),
+      SecureStore.deleteItemAsync('code_verifier'),
+      SecureStore.deleteItemAsync('oauth_auth_url'),
+      SecureStore.deleteItemAsync('oauth_current_url'),
+      SecureStore.deleteItemAsync('oauth_started_at'),
+    ]);
+  };
+
+  // Restore OAuth session state on mount. If the app was backgrounded or
+  // killed mid-login (e.g. user switched to the authenticator app for 2FA),
+  // reopen the browser on the exact Keycloak page the user left (usually the
+  // OTP screen) instead of dropping them back on the Sign In button or
+  // restarting at the username screen. Reloading the initial auth URL would
+  // start a new Keycloak session; the saved page URL carries the in-progress
+  // session (session_code/execution/tab_id) and resumes it.
   useEffect(() => {
     const restoreAuthSession = async () => {
       try {
-        const [storedState, storedVerifier] = await Promise.all([
+        const [storedState, storedVerifier, storedAuthUrl, storedCurrentUrl, storedStartedAt] = await Promise.all([
           SecureStore.getItemAsync('oauth_state'),
           SecureStore.getItemAsync('code_verifier'),
+          SecureStore.getItemAsync('oauth_auth_url'),
+          SecureStore.getItemAsync('oauth_current_url'),
+          SecureStore.getItemAsync('oauth_started_at'),
         ]);
         if (storedState) oauthStateRef.current = storedState;
         if (storedVerifier) codeVerifierRef.current = storedVerifier;
+        const resumeUrl = storedCurrentUrl ?? storedAuthUrl;
+        if (storedState && storedVerifier && resumeUrl) {
+          const ageMs = Date.now() - Number(storedStartedAt ?? Date.now());
+          if (Number.isFinite(ageMs) && ageMs < OAUTH_SESSION_TIMEOUT_MS) {
+            currentUrlRef.current = resumeUrl;
+            setAuthUrl(resumeUrl);
+            setShowWebView(true);
+            setLoading(true);
+            return;
+          }
+          // Stale login attempt: drop it so the user starts fresh.
+          await cleanupAuthSession();
+        }
       } catch (err) {
         console.error('Error restoring auth session:', err);
       }
     };
     restoreAuthSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for error messages from redirects (e.g. from httpClient 401 or dashboard guard)
@@ -105,8 +160,22 @@ const LoginScreen = () => {
   const hasAutoPromptedRef = useRef(false);
 
   const performFingerprintLogin = async () => {
+    // Only one biometric prompt at a time (auto-prompt vs manual tap race).
+    if (isPromptingRef.current) return;
+    isPromptingRef.current = true;
     try {
       setLoading(true);
+      // Validate the stored session BEFORE showing the fingerprint modal.
+      // Prompting first and failing afterwards looks like a biometric
+      // failure and interrupts users who must sign in with credentials
+      // (e.g. mid-login after switching to the authenticator app for 2FA).
+      const hasSession = await trySilentRefresh();
+      if (!hasSession) {
+        setCanUseBiometrics(false);
+        showToast('Your session has expired. Please sign in with your username and password.', 'info');
+        return;
+      }
+
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Unlock with Fingerprint',
         fallbackLabel: 'Use Password',
@@ -144,6 +213,7 @@ const LoginScreen = () => {
       console.error('Biometric authentication error:', error);
       showToast('Biometric authentication error. Please sign in with your credentials.', 'error');
     } finally {
+      isPromptingRef.current = false;
       setLoading(false);
     }
   };
@@ -164,6 +234,27 @@ const LoginScreen = () => {
 
       if (isSupported && isEnabled && hasStoredSession) {
         setCanUseBiometrics(true);
+
+        // Never auto-prompt while a sign-in is in progress (Keycloak WebView
+        // open, callback being processed, or a pending OAuth state restored
+        // after the OS killed the app in the background — e.g. the user
+        // switched to their authenticator app for a 2FA code). An unsolicited
+        // fingerprint challenge here covers the login flow and can only fail,
+        // forcing the authentication to restart.
+        const [pendingState, pendingVerifier] = await Promise.all([
+          SecureStore.getItemAsync('oauth_state'),
+          SecureStore.getItemAsync('code_verifier'),
+        ]);
+        const oauthInProgress =
+          showWebViewRef.current ||
+          isProcessingCallbackRef.current ||
+          oauthStateRef.current != null ||
+          codeVerifierRef.current != null ||
+          pendingState != null ||
+          pendingVerifier != null;
+        if (oauthInProgress) {
+          return;
+        }
 
         // Requirement 1: After user activates fingerprint on their device,
         // ask for fingerprint before allowing logged in user to see their dashboard
@@ -186,19 +277,27 @@ const LoginScreen = () => {
     void checkBiometrics();
   }, [checkBiometrics]);
 
-  // Helper function to generate a random string for PKCE
-  const generateRandomString = (length: number) => {
+  // Mirror WebView visibility for the biometric auto-prompt guard above.
+  useEffect(() => {
+    showWebViewRef.current = showWebView;
+  }, [showWebView]);
+
+  // Helper function to generate a random string for PKCE/state.
+  // Uses expo-crypto random bytes (not Math.random) so the verifier and
+  // state are unpredictable.
+  const generateRandomString = async (length: number) => {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const bytes = await Crypto.getRandomBytesAsync(length);
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += charset.charAt(Math.floor(Math.random() * charset.length));
+      result += charset.charAt(bytes[i] % charset.length);
     }
     return result;
   };
 
   // Helper function to generate PKCE code verifier and challenge
   const generatePKCE = async () => {
-    const codeVerifier = generateRandomString(64);
+    const codeVerifier = await generateRandomString(64);
     const hash = await Crypto.digestStringAsync(
       Crypto.CryptoDigestAlgorithm.SHA256,
       codeVerifier,
@@ -210,20 +309,10 @@ const LoginScreen = () => {
 
   const generateState = () => generateRandomString(32);
 
-  const cleanupAuthSession = async () => {
-    oauthStateRef.current = null;
-    codeVerifierRef.current = null;
-    isProcessingCallbackRef.current = false;
-    await Promise.all([
-      SecureStore.deleteItemAsync('oauth_state'),
-      SecureStore.deleteItemAsync('code_verifier'),
-    ]);
-  };
-
   const handleOAuthCallback = async (code: string) => {
     if (isProcessingCallbackRef.current) return;
     isProcessingCallbackRef.current = true;
-    
+
     try {
       let verifier = codeVerifierRef.current;
       if (!verifier) {
@@ -251,6 +340,9 @@ const LoginScreen = () => {
       if (tokenResponse.refreshToken) {
         await SecureStore.setItemAsync('refresh_token', tokenResponse.refreshToken);
       }
+
+      const orgInfo = await AccountService.getOrganizationInfo();
+      await SecureStore.setItemAsync('org_name', orgInfo?.organizationName ?? '');
 
       setShowWebView(false);
       await cleanupAuthSession();
@@ -307,19 +399,17 @@ const LoginScreen = () => {
 
   const onLogin = async () => {
     setLoading(true);
+    // Starting a manual sign-in cancels the pending auto biometric challenge
+    // so it can't pop over the Keycloak WebView (e.g. while fetching 2FA).
+    hasAutoPromptedRef.current = true;
     isProcessingCallbackRef.current = false;
-    
+
     try {
       const { codeVerifier, codeChallenge } = await generatePKCE();
       codeVerifierRef.current = codeVerifier;
 
-      const state = generateState();
+      const state = await generateState();
       oauthStateRef.current = state;
-
-      await Promise.all([
-        SecureStore.setItemAsync('oauth_state', state),
-        SecureStore.setItemAsync('code_verifier', codeVerifier),
-      ]);
 
       const baseUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`;
       const params = new URLSearchParams({
@@ -331,8 +421,22 @@ const LoginScreen = () => {
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
       });
+      const fullAuthUrl = `${baseUrl}?${params.toString()}`;
 
-      setAuthUrl(`${baseUrl}?${params.toString()}`);
+      // Persist the whole attempt so backgrounding the app (e.g. switching
+      // to the authenticator app for 2FA) or an OS kill doesn't lose it.
+      // oauth_current_url tracks the exact Keycloak page reached below, so a
+      // return resumes mid-flow (OTP screen), not at the username screen.
+      currentUrlRef.current = fullAuthUrl;
+      await Promise.all([
+        SecureStore.setItemAsync('oauth_state', state),
+        SecureStore.setItemAsync('code_verifier', codeVerifier),
+        SecureStore.setItemAsync('oauth_auth_url', fullAuthUrl),
+        SecureStore.setItemAsync('oauth_current_url', fullAuthUrl),
+        SecureStore.setItemAsync('oauth_started_at', Date.now().toString()),
+      ]);
+
+      setAuthUrl(fullAuthUrl);
       setShowWebView(true);
     } catch (error) {
       console.error('OAuth error:', error);
@@ -353,8 +457,17 @@ const LoginScreen = () => {
       } else if (parsed.queryParams?.error) {
         setShowWebView(false);
         setLoading(false);
+        void cleanupAuthSession();
         showToast(`Authentication failed: ${parsed.queryParams.error}`, 'error');
       }
+      return;
+    }
+    // Track the latest Keycloak page (username → password → OTP). Saved on
+    // every step so coming back from the authenticator app resumes exactly
+    // where the user left off instead of restarting at the username screen.
+    if (keycloakUrl && url.startsWith(keycloakUrl) && currentUrlRef.current !== url) {
+      currentUrlRef.current = url;
+      void SecureStore.setItemAsync('oauth_current_url', url);
     }
   };
 
@@ -362,8 +475,8 @@ const LoginScreen = () => {
     await performFingerprintLogin();
   };
 
-  const logoSource = colorScheme === 'dark' 
-    ? require('@/assets/images/splash.png') 
+  const logoSource = colorScheme === 'dark'
+    ? require('@/assets/images/splash.png')
     : require('@/assets/images/logo_light.png');
 
   return (
@@ -379,10 +492,10 @@ const LoginScreen = () => {
           <View style={styles.brandContainer}>
             <View style={styles.brandInner}>
               <Text style={[styles.brandTitle, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}>
-                Pacesetter Cooperative
+                {orgName}
               </Text>
               <Text style={[styles.brandSubtitle, { color: colorScheme === 'dark' ? '#94A3B8' : '#64748B' }]}>
-                powered by Coop Orbit
+                {/* powered by Coop Orbit */}
               </Text>
             </View>
           </View>
@@ -419,11 +532,13 @@ const LoginScreen = () => {
           onRequestClose={() => {
             setShowWebView(false);
             setLoading(false);
+            // Explicit cancel: drop the saved attempt so it isn't resumed.
+            void cleanupAuthSession();
           }}
         >
           <SafeAreaView style={{ flex: 1, backgroundColor: colorScheme === 'dark' ? '#121212' : '#fff' }}>
             <View style={[styles.webViewHeader, { borderBottomColor: colorScheme === 'dark' ? '#2D3748' : '#E2E8F0' }]}>
-              <TouchableOpacity onPress={() => { setShowWebView(false); setLoading(false); }}>
+              <TouchableOpacity onPress={() => { setShowWebView(false); setLoading(false); void cleanupAuthSession(); }}>
                 <Ionicons name="close" size={28} color={colorScheme === 'dark' ? '#fff' : '#173581'} />
               </TouchableOpacity>
               <Text style={[styles.webViewTitle, { color: colorScheme === 'dark' ? '#fff' : '#1A202C' }]}>Secure Sign In</Text>
@@ -431,15 +546,34 @@ const LoginScreen = () => {
             </View>
             {authUrl && (
               <WebView
+                key={webViewKey}
                 source={{ uri: authUrl }}
                 onNavigationStateChange={onNavigationStateChange}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
+                // Persistent storage (NOT incognito): the Keycloak session
+                // cookie must survive backgrounding the app to fetch a 2FA
+                // code from the authenticator app. An incognito WebView keeps
+                // it in RAM only, so returning to the app loses the login
+                // progress and drops the user back on the Sign In button.
+                sharedCookiesEnabled={true}
+                thirdPartyCookiesEnabled={true}
                 startInLoadingState={true}
                 renderLoading={() => (
                   <ActivityIndicator style={styles.webViewLoading} size="large" color="#173581" />
                 )}
-                incognito={true} // Ensures a fresh session
+                // iOS may terminate the web content process while the app is
+                // backgrounded; reload the exact page left (usually the OTP
+                // screen), not the initial auth URL which restarts at the
+                // username screen.
+                onContentProcessDidTerminate={() => {
+                  const resumeUrl = currentUrlRef.current;
+                  if (resumeUrl && resumeUrl !== authUrl) {
+                    setAuthUrl(resumeUrl);
+                  } else {
+                    setWebViewKey((k) => k + 1);
+                  }
+                }}
               />
             )}
           </SafeAreaView>
@@ -567,5 +701,3 @@ const styles = StyleSheet.create({
     marginTop: -12,
   }
 });
-
-

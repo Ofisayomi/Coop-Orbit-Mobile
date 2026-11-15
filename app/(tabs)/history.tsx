@@ -19,8 +19,10 @@ import {
   TransactionService,
   type MemberSearchResult,
 } from '@/services/transaction-service';
-import { getValidAccessToken } from '@/services/authService';
+import { getValidAccessToken, logout } from '@/services/authService';
 import { jwtDecode } from 'jwt-decode';
+import { Toast } from '@/components/ui/Toast';
+import { ToastProvider, useToast } from '@/context/ToastContext';
 
 interface Transaction {
   id: string;
@@ -62,6 +64,7 @@ const TransactionHistoryScreen = () => {
   const [memberSearchError, setMemberSearchError] = useState<string | null>(null);
   const [showOrganizationTransactions, setShowOrganizationTransactions] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   const loadTransactions = useCallback(async (lastId: string | null = null) => {
     setIsLoading(true);
@@ -131,13 +134,19 @@ const TransactionHistoryScreen = () => {
     const checkPermissions = async () => {
       try {
         const token = await getValidAccessToken();
-        const claims = jwtDecode<AccessTokenClaims>(token);
-        const roles = [
-          ...(claims.realm_access?.roles ?? []),
-          ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
-        ];
-        setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
-        setCanSearchMemberTransactions(roles.some((role) => ['Admin', 'Accountant'].includes(role)));
+        if (token == null) {
+          toast.showToast('Login session failed', 'warning');
+          logout();
+        } else {
+
+          const claims = jwtDecode<AccessTokenClaims>(token);
+          const roles = [
+            ...(claims.realm_access?.roles ?? []),
+            ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
+          ];
+          setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
+          setCanSearchMemberTransactions(roles.some((role) => ['Admin', 'Accountant'].includes(role)));
+        }
       } catch {
         setCanViewOrganizationTransactions(false);
         setCanSearchMemberTransactions(false);

@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AccountService, type AccountDto, type UserSearchDto } from '@/services/accountService';
 import { getValidAccessToken } from '@/services/authService';
@@ -30,9 +31,9 @@ interface AccessTokenClaims {
 }
 
 const DEFAULT_ACCOUNTS = [
-  { id: '1', accountName: 'Cooperative Savings', accountType: 'Savings' },
-  { id: '2', accountName: 'Loan Repayment', accountType: 'Loans' },
-  { id: '3', accountName: 'Shares / Contributions', accountType: 'Shares' },
+  // { id: '1', accountName: 'Cooperative Savings', accountType: 'Savings' },
+  // { id: '2', accountName: 'Loan Repayment', accountType: 'Loans' },
+  // { id: '3', accountName: 'Shares / Contributions', accountType: 'Shares' },
 ];
 
 export default function SplitPaymentScreen() {
@@ -59,6 +60,7 @@ export default function SplitPaymentScreen() {
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [attachedFiles, setAttachedFiles] = useState<DocumentPicker.DocumentPickerAsset[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const toast = useToast();
 
   // Theme Colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -67,7 +69,8 @@ export default function SplitPaymentScreen() {
   const textSecondary = isDark ? '#A0AEC0' : '#4A5568';
   const inputBg = isDark ? '#2D3748' : '#F7FAFC';
   const borderColor = isDark ? '#2D3748' : '#E2E8F0';
-  const primary = '#173581';
+  const primary = isDark ? '#fafafa69' : '#173581';
+  const warningColor = isDark ? '#FFA500' : '#FF8C00';
 
   // Derived Calculations
   const totalTransfer = parseFloat(totalTransferStr.replace(/,/g, '')) || 0;
@@ -86,6 +89,10 @@ export default function SplitPaymentScreen() {
     const checkRolesAndUser = async () => {
       try {
         const token = await getValidAccessToken();
+        if (!token) {
+          setCanSelectBeneficiary(false);
+          return;
+        }
         const claims = jwtDecode<AccessTokenClaims>(token);
         const roles = [
           ...(claims.realm_access?.roles ?? []),
@@ -170,7 +177,13 @@ export default function SplitPaymentScreen() {
     setAttachedFiles((prev) => prev.filter((f) => f.uri !== uri));
   };
 
-  const handleAllocationChange = (id: string, value: string) => {
+  const handleAllocationChange = (id: string, value: string, amountDue: number = 0) => {
+
+    if (amountDue < 0 && parseFloat(value) > Math.abs(amountDue)) {
+      toast.showToast(`Amount exceeds your ${Math.abs(amountDue).toLocaleString()} due balance. Please enter a lower amount.`, 'warning');
+      value = '';
+    }
+
     const formatted = value.replace(/[^0-9]/g, '');
     setAllocations((prev) => ({
       ...prev,
@@ -178,11 +191,15 @@ export default function SplitPaymentScreen() {
     }));
   };
 
-  const autoFillAccount = (id: string) => {
-    if (remaining <= 0) return;
-    const currentVal = parseFloat(allocations[id] || '0') || 0;
-    const proposed = currentVal + remaining;
-    handleAllocationChange(id, String(proposed));
+  const autoFillAccount = (id: string, amountDue: number = 0) => {
+    if (amountDue != 0) {
+      handleAllocationChange(id, String(Math.abs(amountDue)));
+    } else {
+      if (remaining <= 0) return;
+      const currentVal = parseFloat(allocations[id] || '0') || 0;
+      const proposed = currentVal + remaining;
+      handleAllocationChange(id, String(proposed));
+    }
   };
 
   const getAccountIcon = (type: string) => {
@@ -448,14 +465,14 @@ export default function SplitPaymentScreen() {
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.splitLabel, { color: textPrimary }]}>{account.accountName}</Text>
                           <Text style={[styles.splitSub, { color: textSecondary }]}>
-                            {account.accountType}
+                            {account.accountType} ({account.accountDescription})
                           </Text>
                         </View>
 
                         {remaining > 0 && (
                           <TouchableOpacity
                             style={[styles.autoFillButton, { borderColor: primary }]}
-                            onPress={() => autoFillAccount(account.id)}
+                            onPress={() => autoFillAccount(account.id, account.balance < 0 ? Math.abs(account.balance) : 0)}
                           >
                             <Text style={[styles.autoFillText, { color: primary }]}>+ Auto-fill</Text>
                           </TouchableOpacity>
@@ -470,9 +487,14 @@ export default function SplitPaymentScreen() {
                           placeholderTextColor={textSecondary}
                           keyboardType="numeric"
                           value={allocations[account.id] || ''}
-                          onChangeText={(val) => handleAllocationChange(account.id, val)}
+                          onChangeText={(val) => handleAllocationChange(account.id, val, account.balance)}
                         />
                       </View>
+                      {account.balance < 0 && (
+                        <Text style={[styles.splitSub, { color: warningColor }]}>
+                          Amount Due: ₦{Math.abs(account.balance).toLocaleString()}
+                        </Text>
+                      )}
                     </View>
                   );
                 })

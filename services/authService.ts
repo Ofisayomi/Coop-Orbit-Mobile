@@ -44,10 +44,10 @@ export async function getStoredTokens(): Promise<{ accessToken: string | null; r
  * Use the refresh token to obtain a new access token from Keycloak.
  * Returns the new access token on success, throws on failure.
  */
-export async function refreshAccessToken(): Promise<string> {
+export async function refreshAccessToken(): Promise<string | null> {
     const { refreshToken } = await getStoredTokens();
     if (!refreshToken) {
-        throw new Error('No refresh token stored.');
+        return null;
     }
 
     const body = new URLSearchParams({
@@ -66,7 +66,7 @@ export async function refreshAccessToken(): Promise<string> {
 
     if (!response.ok) {
         const error = await response.text();
-        throw new Error(`Token refresh failed: ${response.status} - ${error}`);
+        return null;
     }
 
     const data = await response.json();
@@ -84,7 +84,7 @@ export async function refreshAccessToken(): Promise<string> {
  * Get a valid access token. If the current one is expired/expiring, refresh it.
  * Throws if refresh fails (caller should redirect to login).
  */
-export async function getValidAccessToken(): Promise<string> {
+export async function getValidAccessToken(): Promise<string | null> {
     const { accessToken } = await getStoredTokens();
 
     if (accessToken && !isTokenExpiredOrExpiring(accessToken)) {
@@ -144,9 +144,10 @@ export async function trySilentRefresh(): Promise<boolean> {
             return true;
         }
 
-        // Try to use refresh token
-        await refreshAccessToken();
-        return true;
+        // Try to use refresh token — report whether it actually worked so
+        // callers don't offer biometric login for a dead session.
+        const newToken = await refreshAccessToken();
+        return newToken != null;
     } catch {
         return false;
     }
@@ -160,6 +161,73 @@ export function isBiometricSessionVerified(): boolean {
 
 export function setBiometricSessionVerified(verified: boolean): void {
     _isBiometricVerifiedInSession = verified;
+}
+
+/**
+ * How long the app may stay in the background before the biometric
+ * session lock re-engages. Short trips away from the app — e.g. tapping a
+ * notification, or opening the authenticator app to copy a 2FA code while
+ * signing in — must not force re-authentication.
+ */
+export const APP_LOCK_GRACE_MS = 2 * 60 * 1000;
+
+const APP_BACKGROUNDED_AT_KEY = 'app_backgrounded_at';
+
+let _lastBackgroundedAt: number | null = null;
+
+/**
+ * Record the moment the app went to the background. Persisted so the grace
+ * period survives an OS process restart (e.g. the app was recycled while
+ * the user tapped a notification or fetched a 2FA code).
+ */
+export async function markAppBackgrounded(now = Date.now()): Promise<void> {
+    _lastBackgroundedAt = now;
+    try {
+        await SecureStore.setItemAsync(APP_BACKGROUNDED_AT_KEY, now.toString());
+    } catch (error) {
+        console.error('Error persisting app background timestamp:', error);
+    }
+}
+
+/** Clear the background timestamp (called when returning within the grace period). */
+export async function clearAppBackgrounded(): Promise<void> {
+    _lastBackgroundedAt = null;
+    try {
+        await SecureStore.deleteItemAsync(APP_BACKGROUNDED_AT_KEY);
+    } catch (error) {
+        console.error('Error clearing persisted app background timestamp:', error);
+    }
+}
+
+/**
+ * True when the app was backgrounded longer than the grace period.
+ * A fresh launch (no timestamp recorded) counts as expired so a cold
+ * start always begins locked; the login screen then unlocks via biometrics.
+ */
+export function isAppLockExpired(now = Date.now()): boolean {
+    if (_lastBackgroundedAt == null) return true;
+    return now - _lastBackgroundedAt > APP_LOCK_GRACE_MS;
+}
+
+/**
+ * True when the app returned within the grace period, reading the persisted
+ * timestamp when the in-memory one was lost to a process restart. A return
+ * with no recorded backgrounding (genuine cold start) is NOT within grace.
+ */
+export async function isWithinAppLockGrace(now = Date.now()): Promise<boolean> {
+    let backgroundedAt = _lastBackgroundedAt;
+    if (backgroundedAt == null) {
+        try {
+            const stored = await SecureStore.getItemAsync(APP_BACKGROUNDED_AT_KEY);
+            const parsed = stored != null ? Number(stored) : NaN;
+            backgroundedAt = Number.isFinite(parsed) ? parsed : null;
+            _lastBackgroundedAt = backgroundedAt;
+        } catch (error) {
+            console.error('Error reading persisted app background timestamp:', error);
+            return false;
+        }
+    }
+    return backgroundedAt != null && now - backgroundedAt < APP_LOCK_GRACE_MS;
 }
 
 /**

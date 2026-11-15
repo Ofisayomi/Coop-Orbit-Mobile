@@ -53,7 +53,7 @@ Native folders (`android/`) and `expo-dev-client` are present — prefer a devel
 
 ## Testing
 
-There is **no test suite** in this repo yet. Verify with `pnpm lint`, `npx tsc --noEmit`, and a real run (`npx expo start`) exercising: cold start → login → biometric re-entry, token-expiry refresh, each screen you touched (loading/empty/error), and logout. State which platform(s) you ran in your handover.
+Standing user instruction: after making a fix, do NOT run anything to verify it yourself — no `pnpm lint`, `npx tsc --noEmit`, `npx expo start`, dev builds, or package installs. Leave the tree with only the fix and hand over the exact commands and screens for the user to run (cold start → login → biometric re-entry, token-expiry refresh, each touched screen's loading/empty/error states, logout). There is **no test suite** in this repo yet. State plainly which screens and states the user should exercise.
 
 ## Pitfalls
 
@@ -65,4 +65,4 @@ There is **no test suite** in this repo yet. Verify with `pnpm lint`, `npx tsc -
 
 ## Definition of done (this project)
 
-Lint + type-check clean; login/refresh/logout and every touched screen exercised on a stated platform; tokens only in SecureStore; DTOs mirrored with web/backend when the contract changed; no committed tunnels, secrets, or personal env values.
+Handover lists the lint, type-check, and manual checks for the user to run (login/refresh/logout and every touched screen on a stated platform); tokens only in SecureStore; DTOs mirrored with web/backend when the contract changed; no committed tunnels, secrets, or personal env values.
