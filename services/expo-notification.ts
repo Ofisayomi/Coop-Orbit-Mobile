@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
 import { getStoredTokens } from './authService';
 import { getOrCreateDeviceId } from './device';
@@ -32,53 +33,135 @@ Notifications.setNotificationHandler({
 });
 
 /**
- * Navigate to the appropriate screen based on the notification data payload.
+ * Exact in-app destination for a notification type. Kept as route literals
+ * so expo-router's typed routes still check the push/replace calls.
  */
-export function navigateForNotificationData(data: NotificationPayload): void {
+export type NotificationRoute =
+    | { pathname: '/loan-details'; params: { id: string } }
+    | { pathname: '/loans'; params?: undefined }
+    | { pathname: '/guarantor-requests'; params?: undefined }
+    | { pathname: '/payment-requests'; params?: undefined };
+
+const PENDING_NOTIFICATION_ROUTE_KEY = 'pending_notification_route';
+// A tap that is never followed by a login (e.g. user dismisses it) must not
+// reroute a much later sign-in.
+const PENDING_ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Map a notification data payload to its exact screen. Returns null for
+ * unknown types (caller stays where it is).
+ */
+export function resolveNotificationRoute(data: NotificationPayload): NotificationRoute | null {
     const type = data.type as string | undefined;
     const id = (data.id || data.loanId) as string | undefined;
 
-    console.log('[Notification] Navigating for notification payload:', { type, id, data });
+    console.log('[Notification] Resolving route for notification payload:', { type, id, data });
 
     switch (type) {
         case NotificationType.LOAN_REQUEST:
         case NotificationType.GUARANTOR_APPROVED:
-            if (id) {
-                router.push({ pathname: '/loan-details', params: { id } });
-            } else {
-                router.push('/loans');
-            }
-            break;
-
         case NotificationType.LOAN_ACTED:
         case NotificationType.LOAN_STATUS:
-            if (id) {
-                router.push({ pathname: '/loan-details', params: { id } });
-            } else {
-                router.push('/loans');
-            }
-            break;
+            return id ? { pathname: '/loan-details', params: { id } } : { pathname: '/loans' };
 
         case NotificationType.GUARANTOR_REQUEST:
-            router.push('/guarantor-requests');
-            break;
+            return { pathname: '/guarantor-requests' };
 
         case NotificationType.GUARANTOR_ACTION:
-            if (id) {
-                router.push({ pathname: '/loan-details', params: { id } });
-            } else {
-                router.push('/guarantor-requests');
-            }
-            break;
+            return id ? { pathname: '/loan-details', params: { id } } : { pathname: '/guarantor-requests' };
 
         case NotificationType.PAYMENT_REQUEST:
-            router.push('/payment-requests');
-            break;
+            return { pathname: '/payment-requests' };
 
         default:
             console.log('[Notification] Unhandled notification type:', type);
-            break;
+            return null;
     }
+}
+
+/**
+ * Remember where a tap should land. A login or fingerprint detour
+ * (cold start, expired session) replaces the navigation stack and would
+ * otherwise strand the user on the dashboard; the post-auth flow consumes
+ * this and lands on the exact screen instead.
+ */
+export async function savePendingNotificationRoute(route: NotificationRoute): Promise<void> {
+    try {
+        await SecureStore.setItemAsync(
+            PENDING_NOTIFICATION_ROUTE_KEY,
+            JSON.stringify({ ...route, savedAt: Date.now() })
+        );
+    } catch (error) {
+        console.error('[Notification] Error saving pending notification route:', error);
+    }
+}
+
+/**
+ * Take the saved destination (once) for post-auth navigation. Expired or
+ * missing entries resolve to null so only a fresh tap reroutes a sign-in.
+ */
+export async function consumePendingNotificationRoute(): Promise<NotificationRoute | null> {
+    try {
+        const raw = await SecureStore.getItemAsync(PENDING_NOTIFICATION_ROUTE_KEY);
+        if (!raw) return null;
+        await SecureStore.deleteItemAsync(PENDING_NOTIFICATION_ROUTE_KEY);
+        const parsed = JSON.parse(raw) as { pathname?: unknown; params?: unknown; savedAt?: unknown };
+        if (typeof parsed.savedAt !== 'number' || Date.now() - parsed.savedAt > PENDING_ROUTE_TTL_MS) {
+            return null;
+        }
+        switch (parsed.pathname) {
+            case '/loan-details': {
+                const params = parsed.params as { id?: unknown } | undefined;
+                if (typeof params?.id !== 'string' || !params.id) return null;
+                return { pathname: '/loan-details', params: { id: params.id } };
+            }
+            case '/loans':
+                return { pathname: '/loans' };
+            case '/guarantor-requests':
+                return { pathname: '/guarantor-requests' };
+            case '/payment-requests':
+                return { pathname: '/payment-requests' };
+            default:
+                return null;
+        }
+    } catch (error) {
+        console.error('[Notification] Error consuming pending notification route:', error);
+        return null;
+    }
+}
+
+/**
+ * Clear a saved tap destination without consuming it (e.g. on logout, so a
+ * later sign-in never lands on someone else's notification).
+ */
+export async function clearPendingNotificationRoute(): Promise<void> {
+    try {
+        await SecureStore.deleteItemAsync(PENDING_NOTIFICATION_ROUTE_KEY);
+    } catch (error) {
+        console.error('[Notification] Error clearing pending notification route:', error);
+    }
+}
+
+/**
+ * Navigate to the appropriate screen based on the notification data payload.
+ * With a live session the tap lands immediately; otherwise the destination
+ * is persisted and the login flow consumes it after auth, so the user still
+ * reaches the exact screen instead of the dashboard.
+ */
+export async function navigateForNotificationData(data: NotificationPayload): Promise<void> {
+    const route = resolveNotificationRoute(data);
+    if (!route) return;
+    await savePendingNotificationRoute(route);
+    try {
+        const { refreshToken, accessToken } = await getStoredTokens();
+        if (refreshToken || accessToken) {
+            router.push(route);
+            return;
+        }
+    } catch (error) {
+        console.error('[Notification] Error reading stored tokens:', error);
+    }
+    router.replace('/login');
 }
 
 /**
@@ -88,7 +171,7 @@ function handleNotificationResponse(response: Notifications.NotificationResponse
     const data = response.notification.request.content.data as NotificationPayload | undefined;
     if (!data) return;
 
-    navigateForNotificationData(data);
+    void navigateForNotificationData(data);
 }
 
 /**
@@ -187,7 +270,7 @@ export async function handleInitialNotificationResponse(): Promise<void> {
         if (lastResponse) {
             const data = lastResponse.notification.request.content.data as NotificationPayload | undefined;
             if (data) {
-                navigateForNotificationData(data);
+                await navigateForNotificationData(data);
             }
             await Notifications.clearLastNotificationResponseAsync();
         }

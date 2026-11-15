@@ -23,7 +23,7 @@ import {
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ensureFreshTokenAfterBiometrics, setBiometricSessionVerified, trySilentRefresh } from '@/services/authService';
-import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
+import { consumePendingNotificationRoute, registerDeviceTokenWithBackend } from '@/services/expo-notification';
 // import { authorize } from 'react-native-app-auth';
 import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
 
@@ -343,9 +343,7 @@ const LoginScreen = () => {
       });
     }
 
-    setBiometricSessionVerified(true);
-    void registerDeviceTokenWithBackend();
-    router.replace('/(tabs)');
+    await navigateAfterAuth();
   };
 
 
@@ -432,6 +430,19 @@ const LoginScreen = () => {
     }
   };
 
+  // Post-auth landing: a notification tap that detoured through login
+  // still lands on its exact screen instead of the dashboard.
+  const navigateAfterAuth = async () => {
+    setBiometricSessionVerified(true);
+    void registerDeviceTokenWithBackend();
+    const pending = await consumePendingNotificationRoute();
+    if (pending) {
+      router.replace(pending);
+    } else {
+      router.replace('/(tabs)');
+    }
+  };
+
   const onFingerprintLogin = async () => {
     try {
       // Step 0: Validate the stored session BEFORE showing the fingerprint
@@ -461,9 +472,7 @@ const LoginScreen = () => {
         try {
           const tokenResult = await ensureFreshTokenAfterBiometrics(120);
           if (tokenResult.success) {
-            setBiometricSessionVerified(true);
-            void registerDeviceTokenWithBackend();
-            router.replace('/(tabs)');
+            await navigateAfterAuth();
           } else {
             Alert.alert(
               'Session Expired',

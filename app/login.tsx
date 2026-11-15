@@ -31,7 +31,7 @@ import {
   setBiometricSessionVerified,
   trySilentRefresh
 } from '@/services/authService';
-import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
+import { consumePendingNotificationRoute, registerDeviceTokenWithBackend } from '@/services/expo-notification';
 import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
 
 
@@ -159,6 +159,20 @@ const LoginScreen = () => {
 
   const hasAutoPromptedRef = useRef(false);
 
+  // Post-auth landing: a notification tap that detoured through login
+  // (cold start, expired session) still lands on its exact screen instead
+  // of the dashboard. Falls back to the tabs home when there is no tap.
+  const navigateAfterAuth = async () => {
+    setBiometricSessionVerified(true);
+    void registerDeviceTokenWithBackend();
+    const pending = await consumePendingNotificationRoute();
+    if (pending) {
+      router.replace(pending);
+    } else {
+      router.replace('/(tabs)');
+    }
+  };
+
   const performFingerprintLogin = async () => {
     // Only one biometric prompt at a time (auto-prompt vs manual tap race).
     if (isPromptingRef.current) return;
@@ -189,9 +203,7 @@ const LoginScreen = () => {
         const tokenResult = await ensureFreshTokenAfterBiometrics(120);
 
         if (tokenResult.success) {
-          setBiometricSessionVerified(true);
-          void registerDeviceTokenWithBackend();
-          router.replace('/(tabs)');
+          await navigateAfterAuth();
         } else {
           showToast(
             tokenResult.error || 'Your session has expired. Please sign in with username and password.',
@@ -391,9 +403,7 @@ const LoginScreen = () => {
       });
     }
 
-    setBiometricSessionVerified(true);
-    void registerDeviceTokenWithBackend();
-    router.replace('/(tabs)');
+    await navigateAfterAuth();
   };
 
 

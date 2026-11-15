@@ -125,6 +125,10 @@ export async function logout(): Promise<void> {
         // Always clear local tokens
         await SecureStore.deleteItemAsync('access_token');
         await SecureStore.deleteItemAsync('refresh_token');
+        // Drop any saved notification destination (canonical key owned by
+        // services/expo-notification.ts) so a later sign-in never lands on
+        // a stale tap. Kept inline to avoid an import cycle with that module.
+        await SecureStore.deleteItemAsync('pending_notification_route');
         setBiometricSessionVerified(false);
     }
 }
