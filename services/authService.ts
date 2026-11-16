@@ -168,6 +168,45 @@ export function setBiometricSessionVerified(verified: boolean): void {
 }
 
 /**
+ * Roles allowed to view other members' details and account balances.
+ */
+export const PRIVILEGED_MEMBER_ROLES = ['Admin', 'Accountant', 'Secretary'];
+
+/**
+ * Read the signed-in user's roles out of the Keycloak access token.
+ */
+export async function getCurrentUserRoles(): Promise<string[]> {
+    const { accessToken } = await getStoredTokens();
+    if (!accessToken) return [];
+    try {
+        const decoded = jwtDecode<Record<string, any>>(accessToken);
+        const realmRoles: string[] = decoded?.realm_access?.roles ?? [];
+        const resourceAccess: Record<string, any> = decoded?.resource_access ?? {};
+        const clientRoles: string[] = Object.values(resourceAccess).flatMap(
+            (entry: any) => entry?.roles ?? []
+        );
+        const flatRoles: string[] = decoded?.roles ?? [];
+        return [...realmRoles, ...clientRoles, ...flatRoles];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Read the signed-in user's id (Keycloak `sub` claim) out of the access token.
+ */
+export async function getCurrentUserId(): Promise<string | null> {
+    const { accessToken } = await getStoredTokens();
+    if (!accessToken) return null;
+    try {
+        const decoded = jwtDecode<Record<string, any>>(accessToken);
+        return (decoded?.sub as string) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * How long the app may stay in the background before the biometric
  * session lock re-engages. Short trips away from the app — e.g. tapping a
  * notification, or opening the authenticator app to copy a 2FA code while

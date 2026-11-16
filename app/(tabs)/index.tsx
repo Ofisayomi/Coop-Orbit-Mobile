@@ -20,10 +20,13 @@ import { useAppTheme } from '@/context/ThemeContext';
 import { AccountService, type AccountDto, type AccountSummaryDto, type ActivityDto } from '@/services/accountService';
 import {
   clearAppBackgrounded,
+  getCurrentUserId,
+  getCurrentUserRoles,
   getStoredTokens,
   isBiometricSessionVerified,
   isWithinAppLockGrace,
   markAppBackgrounded,
+  PRIVILEGED_MEMBER_ROLES,
   setBiometricSessionVerified,
   trySilentRefresh
 } from '@/services/authService';
@@ -38,6 +41,7 @@ interface Account {
   icon: string;
   color: string;
   badgeText: string;
+  badgeTone: 'warning' | 'neutral';
 }
 
 const DashboardScreen = () => {
@@ -191,6 +195,7 @@ const DashboardScreen = () => {
             icon,
             color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
             badgeText,
+            badgeTone: isOutstanding ? 'warning' : 'neutral',
           };
         });
 
@@ -216,6 +221,7 @@ const DashboardScreen = () => {
             icon,
             color: ['#173581', '#2B6CB0', '#4299E1'][index % 3],
             badgeText: account.isActive ? 'Active' : 'Inactive',
+            badgeTone: 'neutral',
           };
         });
 
@@ -247,6 +253,22 @@ const DashboardScreen = () => {
     setIsRefreshing(true);
     void loadDashboardData();
   }, [loadDashboardData]);
+
+  // Members card: a plain member goes straight to their own member details
+  // page; privileged roles go to the organization members list first.
+  const handleMembersPress = useCallback(async () => {
+    try {
+      const [roles, userId] = await Promise.all([getCurrentUserRoles(), getCurrentUserId()]);
+      const isPrivileged = roles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role));
+      if (!isPrivileged && userId) {
+        router.push({ pathname: '/member-details', params: { id: userId } });
+        return;
+      }
+    } catch {
+      // Fall through to the members list on any role lookup failure.
+    }
+    router.push('/members');
+  }, [router]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
@@ -297,8 +319,33 @@ const DashboardScreen = () => {
                   <Ionicons name={account.icon as any} size={24} color="#fff" />
                 </View>
                 {account.badgeText && (
-                  <View style={styles.statusBadge}>
-                    <Text style={styles.statusText}>{account.badgeText}</Text>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      account.badgeTone === 'warning' && {
+                        backgroundColor: isDark ? '#78350F' : '#FEF3C7',
+                      },
+                    ]}
+                  >
+                    {account.badgeTone === 'warning' ? (
+                      <View style={styles.warningBadgeContent}>
+                        <Ionicons
+                          name="warning"
+                          size={11}
+                          color={isDark ? '#FDE68A' : '#92400E'}
+                        />
+                        <Text
+                          style={[
+                            styles.statusText,
+                            { color: isDark ? '#FDE68A' : '#92400E', fontWeight: '700' },
+                          ]}
+                        >
+                          {account.badgeText}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.statusText}>{account.badgeText}</Text>
+                    )}
                   </View>
                 )}
               </View>
@@ -323,10 +370,9 @@ const DashboardScreen = () => {
         <Text style={[styles.sectionTitle, { color: sectionTitleColor }]}>Quick Actions</Text>
         <View style={styles.quickActionsGrid}>
           {[
-            { name: 'Request Loan', icon: 'document-text-outline', lightBg: iconBgLight, route: '/request-loan' },
-            { name: 'Make Payment', icon: 'card-outline', lightBg: iconBgMid, route: '/make-payment' },
-            { name: 'Payment Requests', icon: 'receipt-outline', lightBg: iconBgLight, route: '/payment-requests' },
-            { name: 'My Loans', icon: 'list-outline', lightBg: iconBgMid, route: '/loans' },
+            { name: 'My Loans', icon: 'list-outline', lightBg: iconBgLight, route: '/loans' },
+            { name: 'Payment Requests', icon: 'receipt-outline', lightBg: iconBgMid, route: '/payment-requests' },
+            { name: 'Members', icon: 'id-card-outline', lightBg: iconBgLight, route: '/members' },
             { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/guarantor-requests' },
             { name: 'Reports', icon: 'bar-chart-outline', lightBg: iconBgLight, route: '/(tabs)/reports' },
             { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
@@ -335,7 +381,9 @@ const DashboardScreen = () => {
               key={index}
               style={[styles.quickActionItem, { backgroundColor: cardBg }]}
               onPress={() => {
-                if (action.route) {
+                if (action.name === 'Members') {
+                  void handleMembersPress();
+                } else if (action.route) {
                   router.push(action.route as any);
                 }
               }}
@@ -537,6 +585,11 @@ const styles = StyleSheet.create({
   statusText: {
     color: '#fff',
     fontSize: 10,
+  },
+  warningBadgeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   sectionTitle: {
     fontSize: 18,

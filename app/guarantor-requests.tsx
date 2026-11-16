@@ -3,7 +3,6 @@ import { Stack, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   RefreshControl,
   ScrollView,
@@ -14,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
   AccountService,
@@ -66,6 +66,7 @@ const DUMMY_REQUESTS: LoanGuarantorRequestDto[] = [
 
 export default function GuarantorRequestsScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -203,9 +204,9 @@ export default function GuarantorRequestsScreen() {
       const statusValue = confirmAction === 'approve' ? 2 : 3;
       await AccountService.updateGuarantorRequest(selectedRequest.id, statusValue);
 
-      Alert.alert(
-        'Request Updated',
-        `You have successfully ${confirmAction === 'approve' ? 'approved' : 'rejected'} ${selectedRequest.applicantName}'s guarantor request.`
+      showToast(
+        `You have successfully ${confirmAction === 'approve' ? 'approved' : 'rejected'} ${selectedRequest.applicantName}'s guarantor request.`,
+        'success'
       );
 
       // Locally update status for instant UI responsiveness
@@ -221,7 +222,7 @@ export default function GuarantorRequestsScreen() {
       setSelectedRequest(null);
       void fetchRequests(cursorHistory[currentIndex] ?? null);
     } catch (error) {
-      Alert.alert('Action Failed', error instanceof Error ? error.message : 'Please try again later.');
+      showToast(error instanceof Error ? error.message : 'Please try again later.', 'error');
     } finally {
       setIsUpdating(false);
     }

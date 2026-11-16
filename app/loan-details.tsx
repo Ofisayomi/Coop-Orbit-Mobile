@@ -3,7 +3,6 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
   AccountService,
@@ -40,6 +40,7 @@ interface NextStepItem {
 
 export default function LoanDetailsScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -276,9 +277,9 @@ export default function LoanDetailsScreen() {
   ];
 
   const handleRemindGuarantor = (guarantorName: string) => {
-    Alert.alert(
-      'Guarantor Reminder',
-      `A notification reminder has been queued for ${guarantorName} to approve your loan request.`
+    showToast(
+      `A notification reminder has been queued for ${guarantorName} to approve your loan request.`,
+      'info'
     );
   };
 

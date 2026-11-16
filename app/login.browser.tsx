@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 
 import { Colors } from '@/constants/theme';
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ensureFreshTokenAfterBiometrics, setBiometricSessionVerified, trySilentRefresh } from '@/services/authService';
 import { consumePendingNotificationRoute, registerDeviceTokenWithBackend } from '@/services/expo-notification';
@@ -30,6 +31,7 @@ import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
 
 const LoginScreen = () => {
   const router = useRouter();
+  const { showToast } = useToast();
   const colorScheme = useColorScheme();
   const themeColors = Colors[colorScheme ?? 'light'];
 
@@ -164,7 +166,7 @@ const LoginScreen = () => {
         console.error('OAuth error:', error);
         setLoading(false);
         cleanupAuthSession();
-        Alert.alert('Authentication Failed', `Error: ${error}`);
+        showToast(`Authentication failed: ${error}`, 'error');
       }
     };
 
@@ -187,11 +189,7 @@ const LoginScreen = () => {
           setLoading(false);
           cleanupAuthSession();
 
-          Alert.alert(
-            'Authentication Timeout',
-            'Authentication took too long and was cancelled. Please try again.',
-            [{ text: 'OK' }]
-          );
+          showToast('Authentication took too long and was cancelled. Please try again.', 'error');
         }
       }
     }, 30000);
@@ -296,11 +294,7 @@ const LoginScreen = () => {
       setLoading(false);
       WebBrowser.dismissBrowser();
 
-      Alert.alert(
-        'Authentication Error',
-        'Failed to complete authentication. PKCE verification or network error. Please try again.',
-        [{ text: 'OK' }]
-      );
+      showToast('Failed to complete authentication. PKCE verification or network error. Please try again.', 'error');
     }
   };
 
@@ -422,11 +416,7 @@ const LoginScreen = () => {
       await cleanupAuthSession();
       setLoading(false);
 
-      Alert.alert(
-        'Authentication Error',
-        'An error occurred during authentication. Please try again.',
-        [{ text: 'OK' }]
-      );
+      showToast('An error occurred during authentication. Please try again.', 'error');
     }
   };
 
@@ -452,11 +442,7 @@ const LoginScreen = () => {
       const hasSession = await trySilentRefresh();
       if (!hasSession) {
         setCanUseBiometrics(false);
-        Alert.alert(
-          'Session Expired',
-          'Your session has expired. Please log in with your credentials.',
-          [{ text: 'OK' }]
-        );
+        showToast('Your session has expired. Please log in with your credentials.', 'info');
         return;
       }
 
@@ -474,26 +460,18 @@ const LoginScreen = () => {
           if (tokenResult.success) {
             await navigateAfterAuth();
           } else {
-            Alert.alert(
-              'Session Expired',
-              tokenResult.error || 'Your session has expired. Please log in with your credentials.',
-              [{ text: 'OK' }]
-            );
+            showToast(tokenResult.error || 'Your session has expired. Please log in with your credentials.', 'info');
           }
         } catch (authError) {
           console.error('Silent refresh failed during biometric login:', authError);
-          Alert.alert(
-            'Session Expired',
-            'Your session has expired. Please log in with your credentials.',
-            [{ text: 'OK' }]
-          );
+          showToast('Your session has expired. Please log in with your credentials.', 'info');
         } finally {
           setLoading(false);
         }
       }
     } catch (error) {
       console.error('Biometric auth error:', error);
-      Alert.alert('Error', 'Biometric authentication failed.');
+      showToast('Biometric authentication failed.', 'error');
     }
   };
 

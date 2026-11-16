@@ -3,8 +3,6 @@ import { Stack, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -111,7 +109,6 @@ export default function PaymentRequestsScreen() {
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('All');
-  const [selectedRequest, setSelectedRequest] = useState<PaymentRequestsDto | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -120,7 +117,6 @@ export default function PaymentRequestsScreen() {
   const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
   const textSecondary = isDark ? '#A0AEC0' : '#718096';
   const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
   const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
   const tableBorder = isDark ? '#2D3748' : '#F7FAFC';
   const primary = '#173581';
@@ -177,20 +173,6 @@ export default function PaymentRequestsScreen() {
     }
   };
 
-  const getStatusBgColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'approved':
-        return isDark ? '#064E3B' : '#D1FAE5';
-      case 'pending':
-        return isDark ? '#78350F' : '#FEF3C7';
-      case 'rejected':
-      case 'cancelled':
-        return isDark ? '#7F1D1D' : '#FEE2E2';
-      default:
-        return isDark ? '#2D3748' : '#F3F4F6';
-    }
-  };
-
   const getStatusIconName = (status: string): keyof typeof Ionicons.glyphMap => {
     switch (status?.toLowerCase()) {
       case 'approved':
@@ -215,35 +197,7 @@ export default function PaymentRequestsScreen() {
     return matchesSearch && matchesTab;
   });
 
-  const handleCancelRequest = (id: string) => {
-    Alert.alert(
-      'Cancel Payment Request',
-      'Are you sure you want to cancel this payment request?',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const res = await apiClient.patch(`/paymentrequests/${id}/cancel`, {
-                body: JSON.stringify({ note: 'Cancelled by user' }),
-              });
-              if (res.ok) {
-                Alert.alert('Success', 'Payment request cancelled');
-                setSelectedRequest(null);
-                void fetchRequests();
-              } else {
-                Alert.alert('Error', 'Unable to cancel payment request');
-              }
-            } catch {
-              Alert.alert('Error', 'Unable to cancel payment request');
-            }
-          },
-        },
-      ]
-    );
-  };
+
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
@@ -383,7 +337,9 @@ export default function PaymentRequestsScreen() {
                 <TouchableOpacity
                   key={req.id}
                   activeOpacity={0.7}
-                  onPress={() => setSelectedRequest(req)}
+                  onPress={() =>
+                    router.push({ pathname: '/payment-request-details', params: { id: req.id } })
+                  }
                   style={[
                     styles.tableRow,
                     {
@@ -434,133 +390,6 @@ export default function PaymentRequestsScreen() {
           )}
         </View>
       </ScrollView>
-
-      {/* Details Modal */}
-      <Modal
-        visible={selectedRequest !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSelectedRequest(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContentCard, { backgroundColor: cardBg }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: tableBorder }]}>
-              <Text style={[styles.modalHeaderTitle, { color: textPrimary }]}>Payment Request</Text>
-              <TouchableOpacity onPress={() => setSelectedRequest(null)} style={styles.modalCloseButton}>
-                <Ionicons name="close" size={22} color={textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            {selectedRequest && (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
-                {/* Status Hero */}
-                <View style={styles.modalStatusSection}>
-                  <View style={[styles.modalStatusIconCircle, { backgroundColor: getStatusBgColor(selectedRequest.status) }]}>
-                    <Ionicons
-                      name={getStatusIconName(selectedRequest.status)}
-                      size={36}
-                      color={getStatusColor(selectedRequest.status)}
-                    />
-                  </View>
-                  <Text style={[styles.modalAmount, { color: textPrimary }]}>
-                    ₦{selectedRequest.amount.toLocaleString()}
-                  </Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(selectedRequest.status), marginTop: 8 }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(selectedRequest.status), fontSize: 11 }]}>
-                      Request {selectedRequest.status}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Information List */}
-                <View style={[styles.modalDetailsList, { borderColor: inputBorder }]}>
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Initiator</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>{selectedRequest.beneficiaryName}</Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Request ID</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary, fontSize: 12 }]} numberOfLines={1}>
-                      {selectedRequest.id}
-                    </Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomColor: tableBorder }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Date Requested</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>
-                      {new Date(selectedRequest.transactionDate).toLocaleDateString('en-NG', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                      })}
-                    </Text>
-                  </View>
-
-                  <View style={[styles.modalDetailRow, { borderBottomWidth: 0 }]}>
-                    <Text style={[styles.modalDetailLabel, { color: textSecondary }]}>Accounts Split</Text>
-                    <Text style={[styles.modalDetailValue, { color: textPrimary }]}>
-                      {selectedRequest.accountCount} {selectedRequest.accountCount === 1 ? 'Beneficiary' : 'Beneficiaries'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Account Allocations Breakdown */}
-                {selectedRequest.requestAccounts && selectedRequest.requestAccounts.length > 0 && (
-                  <View style={styles.breakdownSection}>
-                    <Text style={[styles.breakdownTitle, { color: textSecondary }]}>
-                      ALLOCATIONS BREAKDOWN
-                    </Text>
-                    <View style={[styles.breakdownCard, { borderColor: inputBorder, backgroundColor: inputBg }]}>
-                      {selectedRequest.requestAccounts.map((acc, index) => (
-                        <View
-                          key={acc.accountId || index}
-                          style={[
-                            styles.breakdownRow,
-                            index < selectedRequest.requestAccounts!.length - 1 && { borderBottomColor: tableBorder, borderBottomWidth: 1 },
-                          ]}
-                        >
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.breakdownAccName, { color: textPrimary }]}>
-                              {acc.accountName}
-                            </Text>
-                            {acc.percentage ? (
-                              <Text style={[styles.breakdownPercent, { color: textSecondary }]}>
-                                {acc.percentage}% of total
-                              </Text>
-                            ) : null}
-                          </View>
-                          <Text style={[styles.breakdownAmount, { color: primary }]}>
-                            ₦{acc.amount.toLocaleString()}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {/* Cancel Action if Pending */}
-                {selectedRequest.status.toLowerCase() === 'pending' && (
-                  <TouchableOpacity
-                    style={[styles.cancelButton, { borderColor: '#EF4444' }]}
-                    onPress={() => handleCancelRequest(selectedRequest.id)}
-                  >
-                    <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
-                    <Text style={styles.cancelButtonText}>Cancel Payment Request</Text>
-                  </TouchableOpacity>
-                )}
-
-                <TouchableOpacity
-                  style={[styles.modalDoneButton, { backgroundColor: primary }]}
-                  onPress={() => setSelectedRequest(null)}
-                >
-                  <Text style={styles.modalDoneButtonText}>Close</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

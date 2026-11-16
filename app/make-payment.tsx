@@ -5,7 +5,6 @@ import { jwtDecode } from 'jwt-decode';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -169,7 +168,7 @@ export default function SplitPaymentScreen() {
         setAttachedFiles((prev) => [...prev, ...result.assets]);
       }
     } catch {
-      Alert.alert('Error', 'Could not pick document');
+      toast.showToast('Could not pick document', 'error');
     }
   };
 
@@ -217,12 +216,12 @@ export default function SplitPaymentScreen() {
 
   const submitPayment = async () => {
     if (!isBalanced || totalTransfer <= 0) {
-      Alert.alert('Validation Error', 'Please ensure total allocated matches the transfer amount exactly.');
+      toast.showToast('Please ensure total allocated matches the transfer amount exactly.', 'warning');
       return;
     }
 
     if (canSelectBeneficiary && paymentTarget === 'member' && !selectedMember) {
-      Alert.alert('Beneficiary Required', 'Please select a beneficiary member before completing the allocation.');
+      toast.showToast('Please select a beneficiary member before completing the allocation.', 'warning');
       return;
     }
 
@@ -249,11 +248,10 @@ export default function SplitPaymentScreen() {
       };
 
       await AccountService.createPaymentRequest(payload);
-      Alert.alert('Success', 'Split payment request submitted successfully!', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      toast.showToast('Split payment request submitted successfully!', 'success');
+      router.back();
     } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to submit payment request');
+      toast.showToast(error instanceof Error ? error.message : 'Failed to submit payment request', 'error');
     } finally {
       setIsSubmitting(false);
     }

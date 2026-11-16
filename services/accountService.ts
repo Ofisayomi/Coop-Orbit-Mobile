@@ -34,6 +34,40 @@ export interface GuarantorDto {
   membershipType?: string | null;
 }
 
+export interface MemberDto {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  userName?: string | null;
+  membershipId?: string | null;
+  emailAddress?: string | null;
+  phoneNumber?: string | null;
+  address?: string | null;
+  membershipType?: string | null;
+  role?: string | null;
+  status?: string | null;
+  gender?: string | null;
+  occupation?: string | null;
+  shares?: number | null;
+  loanBalance?: number | null;
+  totalSavings?: number | null;
+}
+
+export interface PaginatedMembersResponse {
+  items: MemberDto[];
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  totalItems: number;
+  nextCursor?: string | null;
+}
+
+export interface MemberAccountBalanceDto {
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  balance: number;
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw new Error((await response.text()) || 'Request failed');
@@ -267,8 +301,43 @@ export const AccountService = {
     return readJson<LoanProductDto[]>(await apiClient.get('/accounts/loan'));
   },
 
-  async getGuarantors(): Promise<GuarantorDto[]> {
-    return readJson<GuarantorDto[]>(await apiClient.get('/users/guarantors'));
+  async getMembers(params: { lastId?: string | null; search?: string } = {}): Promise<PaginatedMembersResponse> {
+    const query = new URLSearchParams({ pageSize: '20' });
+    if (params.lastId) query.set('lastId', params.lastId);
+    if (params.search?.trim()) query.set('search', params.search.trim());
+    const response = await apiClient.get(`/users?${query.toString()}`);
+    if (!response.ok) throw new Error('Unable to load members');
+    const data = await response.json();
+    return {
+      items: data.items || [],
+      hasNextPage: Boolean(data.hasNextPage),
+      hasPreviousPage: Boolean(data.hasPreviousPage),
+      totalItems: data.totalItems ?? (data.items?.length || 0),
+      nextCursor: data.nextCursor ?? null,
+    };
+  },
+
+  async getMember(id: string): Promise<MemberDto> {
+    const response = await apiClient.get(`/users/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error('Unable to load member details');
+    return response.json() as Promise<MemberDto>;
+  },
+
+  async getMemberAccounts(id: string): Promise<MemberAccountBalanceDto[]> {
+    const response = await apiClient.get(`/users/${encodeURIComponent(id)}/accounts`);
+    if (!response.ok) throw new Error('Unable to load member accounts');
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  },
+
+  async getGuarantors(guarantorTypes?: string[]): Promise<GuarantorDto[]> {
+    const query = (guarantorTypes ?? [])
+      .filter((type) => type != null && type !== '')
+      .map((type) => `guarantorTypes=${encodeURIComponent(type)}`)
+      .join('&');
+    return readJson<GuarantorDto[]>(
+      await apiClient.get(query ? `/users/guarantors?${query}` : '/users/guarantors')
+    );
   },
 
   async requestLoan(payload: {

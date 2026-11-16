@@ -15,11 +15,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppTheme } from '@/context/ThemeContext';
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { logout } from '@/services/authService';
 
 export default function SettingsScreen() {
     const router = useRouter();
+    const { showToast } = useToast();
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
     const { themeMode, setThemeMode } = useAppTheme();
@@ -64,13 +66,13 @@ export default function SettingsScreen() {
                 if (result.success) {
                     setIsBiometricEnabled(true);
                     await SecureStore.setItemAsync('biometrics_enabled', 'true');
-                    Alert.alert('Success', 'Biometric login has been enabled.');
+                    showToast('Biometric login has been enabled.', 'success');
                 } else {
                     setIsBiometricEnabled(false);
                 }
             } catch (error) {
                 console.error(error);
-                Alert.alert('Error', 'Failed to enable biometrics.');
+                showToast('Failed to enable biometrics.', 'error');
                 setIsBiometricEnabled(false);
             }
         } else {
@@ -85,17 +87,17 @@ export default function SettingsScreen() {
         if (value) {
             setIsTwoFactorEnabled(true);
             await SecureStore.setItemAsync('two_factor_enabled', 'true');
-            Alert.alert('Two-Factor Authentication', '2FA has been mocked as enabled. In a production app, this would initiate a setup flow.');
+            showToast('2FA has been mocked as enabled. In a production app, this would initiate a setup flow.', 'info');
         } else {
             setIsTwoFactorEnabled(false);
             await SecureStore.setItemAsync('two_factor_enabled', 'false');
-            Alert.alert('Two-Factor Authentication', '2FA has been mocked as disabled.');
+            showToast('2FA has been mocked as disabled.', 'info');
         }
     };
 
     const onChangePassword = () => {
         // Navigate to a change password screen or show a modal
-        Alert.alert('Change Password', 'This would open the change password flow.');
+        showToast('This would open the change password flow.', 'info');
     };
 
     const onLogout = () => {

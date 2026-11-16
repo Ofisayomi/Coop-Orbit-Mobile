@@ -2,19 +2,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AccountService, type LoanProductDto } from '@/services/accountService';
 
@@ -70,6 +70,7 @@ const FloatingDropdown = ({ options, onSelect, selectedValue, placeholder, isOpe
 
 const RequestLoanScreen = () => {
   const router = useRouter();
+  const { showToast } = useToast();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -87,6 +88,9 @@ const RequestLoanScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoadingGuarantors, setIsLoadingGuarantors] = useState(false);
+  const [guarantorError, setGuarantorError] = useState<string | null>(null);
+  const repaymentDuration = [12]; // in months
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -129,23 +133,10 @@ const RequestLoanScreen = () => {
       setIsLoading(true);
       setLoadError(null);
       try {
-        const [products, availableGuarantors] = await Promise.all([
-          AccountService.getLoanProducts(),
-          AccountService.getGuarantors(),
-        ]);
+        const products = await AccountService.getLoanProducts();
         setLoanProducts(products);
-        setGuarantors(availableGuarantors.map((guarantor) => {
-          const name = `${guarantor.firstName ?? ''} ${guarantor.lastName ?? ''}`.trim() || guarantor.membershipId || 'Member';
-          return {
-            id: guarantor.id,
-            name,
-            joinDate: guarantor.membershipId ? `MEMBER ID: ${guarantor.membershipId}` : 'COOPERATIVE MEMBER',
-            avatar: name.charAt(0).toUpperCase(),
-            selected: false,
-          };
-        }));
       } catch {
-        setLoadError('Unable to load loan products and guarantors. Please try again.');
+        setLoadError('Unable to load loan products. Please try again.');
       } finally {
         setIsLoading(false);
       }
@@ -154,10 +145,33 @@ const RequestLoanScreen = () => {
     void loadLoanFormData();
   }, []);
 
+  const toGuarantorList = (availableGuarantors: { id: string; firstName?: string | null; lastName?: string | null; membershipId?: string | null }[]): Guarantor[] =>
+    availableGuarantors.map((guarantor) => {
+      const name = `${guarantor.firstName ?? ''} ${guarantor.lastName ?? ''}`.trim() || guarantor.membershipId || 'Member';
+      return {
+        id: guarantor.id,
+        name,
+        joinDate: guarantor.membershipId ? `MEMBER ID: ${guarantor.membershipId}` : 'COOPERATIVE MEMBER',
+        avatar: name.charAt(0).toUpperCase(),
+        selected: false,
+      };
+    });
+
+  // Fetch only the members qualified to guarantee the selected loan product,
+  // sending that product's allowed guarantor types to the backend.
   const selectLoanType = (loanName: string) => {
     const product = loanProducts.find((item) => item.loanName === loanName);
     setLoanType(product?.loanId ?? '');
-    setGuarantors((current) => current.map((guarantor) => ({ ...guarantor, selected: false })));
+    setGuarantors([]);
+    setGuarantorError(null);
+    if (!product || (product.guarantorTypes ?? []).length === 0) {
+      return;
+    }
+    setIsLoadingGuarantors(true);
+    AccountService.getGuarantors(product.guarantorTypes)
+      .then((availableGuarantors) => setGuarantors(toGuarantorList(availableGuarantors)))
+      .catch(() => setGuarantorError('Unable to load qualified guarantors. Please try again.'))
+      .finally(() => setIsLoadingGuarantors(false));
   };
 
   const toggleGuarantor = (id: string) => {
@@ -178,15 +192,15 @@ const RequestLoanScreen = () => {
     const requestedAmount = Number(amount);
     const requiredGuarantors = selectedLoanProduct?.guarantorCount ?? 0;
     if (!selectedLoanProduct || !Number.isFinite(requestedAmount) || requestedAmount <= 0 || !purpose.trim()) {
-      Alert.alert('Missing information', 'Select a loan product, enter a valid amount, and describe the loan purpose.');
+      showToast('Select a loan product, enter a valid amount, and describe the loan purpose.', 'warning');
       return;
     }
     if (selectedGuarantorsCount !== requiredGuarantors) {
-      Alert.alert('Guarantors required', `Select exactly ${requiredGuarantors} guarantor${requiredGuarantors === 1 ? '' : 's'} for this loan product.`);
+      showToast(`Select exactly ${requiredGuarantors} guarantor${requiredGuarantors === 1 ? '' : 's'} for this loan product.`, 'warning');
       return;
     }
     if (Number.isNaN(Date.parse(startDate))) {
-      Alert.alert('Invalid start date', 'Enter the preferred start date as YYYY-MM-DD.');
+      showToast('Enter the preferred start date as YYYY-MM-DD.', 'warning');
       return;
     }
 
@@ -200,9 +214,10 @@ const RequestLoanScreen = () => {
         comment: purpose.trim(),
         duration: Number(duration),
       });
-      Alert.alert('Loan request submitted', message, [{ text: 'OK', onPress: () => router.back() }]);
+      showToast(message || 'Loan request submitted.', 'success');
+      router.back();
     } catch (error) {
-      Alert.alert('Unable to submit loan request', error instanceof Error ? error.message : 'Please try again.');
+      showToast(error instanceof Error ? error.message : 'Please try again.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -312,7 +327,7 @@ const RequestLoanScreen = () => {
                 <Text style={[styles.durationValue, { color: primary }]}>{duration} Months</Text>
               </View>
               <View style={styles.sliderContainer}>
-                {[6, 12, 18, 24, 30].map((month) => (
+                {repaymentDuration.map((month) => (
                   <TouchableOpacity
                     key={month}
                     style={[styles.sliderButton, duration === String(month) && { backgroundColor: primary }]}
@@ -398,8 +413,10 @@ const RequestLoanScreen = () => {
             </View>
 
             <Text style={[styles.helperText, { color: textSecondary, marginBottom: 16 }]}>
-              {selectedLoanProduct ? `Select exactly ${selectedLoanProduct.guarantorCount} guarantor${selectedLoanProduct.guarantorCount === 1 ? '' : 's'}.` : 'Select a loan product to view its guarantor requirement.'}
+              {selectedLoanProduct ? `Select exactly ${selectedLoanProduct.guarantorCount} guarantor${selectedLoanProduct.guarantorCount === 1 ? '' : 's'}.` : 'Select a loan product to see qualified guarantors.'}
             </Text>
+            {isLoadingGuarantors ? <ActivityIndicator style={styles.loadingIndicator} color={primary} /> : null}
+            {guarantorError ? <Text style={styles.errorText}>{guarantorError}</Text> : null}
 
             {/* Search Guarantors */}
             <View style={[styles.searchBox, { backgroundColor: inputBg, borderColor: inputBorder }]}>
@@ -459,7 +476,11 @@ const RequestLoanScreen = () => {
                 ) : (
                   <View style={styles.emptyGuarantors}>
                     <Text style={[styles.emptyGuarantorsText, { color: textSecondary }]}>
-                      No guarantors found matching your search.
+                      {!selectedLoanProduct
+                        ? 'Select a loan product above to see qualified guarantors.'
+                        : isLoadingGuarantors
+                          ? 'Loading qualified guarantors…'
+                          : 'No qualified guarantors found for this loan product.'}
                     </Text>
                   </View>
                 )}
