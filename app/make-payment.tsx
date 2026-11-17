@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AccountService, type AccountDto, type UserSearchDto } from '@/services/accountService';
-import { getValidAccessToken } from '@/services/authService';
+import { AuthError, getValidAccessToken, withExternalActivity } from '@/services/authService';
 
 interface AccessTokenClaims {
   name?: string;
@@ -29,7 +29,7 @@ interface AccessTokenClaims {
   resource_access?: Record<string, { roles?: string[] }>;
 }
 
-const DEFAULT_ACCOUNTS = [
+const DEFAULT_ACCOUNTS: AccountDto[] = [
   // { id: '1', accountName: 'Cooperative Savings', accountType: 'Savings' },
   // { id: '2', accountName: 'Loan Repayment', accountType: 'Loans' },
   // { id: '3', accountName: 'Shares / Contributions', accountType: 'Shares' },
@@ -88,10 +88,6 @@ export default function SplitPaymentScreen() {
     const checkRolesAndUser = async () => {
       try {
         const token = await getValidAccessToken();
-        if (!token) {
-          setCanSelectBeneficiary(false);
-          return;
-        }
         const claims = jwtDecode<AccessTokenClaims>(token);
         const roles = [
           ...(claims.realm_access?.roles ?? []),
@@ -102,7 +98,11 @@ export default function SplitPaymentScreen() {
 
         const name = claims.name || claims.preferred_username || claims.given_name || 'Myself';
         setCurrentUserName(name);
-      } catch {
+      } catch (error) {
+        if (error instanceof AuthError && error.kind === 'network') {
+          toast.showToast(error.message, 'warning');
+          return;
+        }
         setCanSelectBeneficiary(false);
       }
     };
@@ -175,11 +175,11 @@ export default function SplitPaymentScreen() {
 
   const handleDocumentPick = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
+      const result = await withExternalActivity(() => DocumentPicker.getDocumentAsync({
         type: ['image/jpeg', 'image/png', 'application/pdf'],
         copyToCacheDirectory: false,
         multiple: true,
-      });
+      }));
 
       if (!result.canceled && result.assets) {
         setAttachedFiles((prev) => [...prev, ...result.assets]);

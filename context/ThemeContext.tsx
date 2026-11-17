@@ -28,7 +28,7 @@ export function AppThemeProvider({ children }: { children: React.ReactNode }) {
                 setThemeModeState(storedTheme as ThemeMode);
             }
         } catch (error) {
-            console.error('Failed to load theme preference:', error);
+            
         } finally {
             setIsLoaded(true);
         }

@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getCurrentUserRoles, PRIVILEGED_MEMBER_ROLES } from '@/services/authService';
+import { getCurrentUserId, getCurrentUserRoles, PRIVILEGED_MEMBER_ROLES } from '@/services/authService';
 import {
   PaymentRequestService,
   type RevertPaymentRequestPayload,
@@ -47,8 +47,10 @@ export default function PaymentRequestDetailsScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [adminNote, setAdminNote] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isDeciding, setIsDeciding] = useState(false);
 
   // Revert + OTP state
   const [otpModalVisible, setOtpModalVisible] = useState(false);
@@ -93,9 +95,16 @@ export default function PaymentRequestDetailsScreen() {
 
   useEffect(() => {
     void getCurrentUserRoles().then(setUserRoles).catch(() => setUserRoles([]));
+    void getCurrentUserId().then(setCurrentUserId).catch(() => setCurrentUserId(null));
   }, []);
 
   const canRevert = userRoles.some((role) => REVERT_ROLES.includes(role));
+  const isPrivileged = userRoles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role));
+  // Whether the viewer raised this request (matched by user id).
+  const isRaiser =
+    !!request?.beneficiaryId &&
+    !!currentUserId &&
+    request.beneficiaryId.toLowerCase() === currentUserId.toLowerCase();
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -159,6 +168,42 @@ export default function PaymentRequestDetailsScreen() {
               showToast(err instanceof Error ? err.message : 'Unable to cancel payment request', 'error');
             } finally {
               setIsCancelling(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDecisionRequest = (decision: 'approve' | 'reject') => {
+    if (!request) return;
+    const action = decision === 'approve' ? 'Approve' : 'Reject';
+    Alert.alert(
+      `${action} Payment Request`,
+      `Are you sure you want to ${action.toLowerCase()} this payment request?`,
+      [
+        { text: 'Back', style: 'cancel' },
+        {
+          text: `Yes, ${action}`,
+          style: decision === 'approve' ? 'default' : 'destructive',
+          onPress: async () => {
+            setIsDeciding(true);
+            try {
+              if (decision === 'approve') {
+                await PaymentRequestService.approvePaymentRequest(request.id, adminNote);
+                showToast('Payment request approved', 'success');
+              } else {
+                await PaymentRequestService.rejectPaymentRequest(request.id, adminNote);
+                showToast('Payment request rejected', 'success');
+              }
+              await fetchDetails();
+            } catch (err) {
+              showToast(
+                err instanceof Error ? err.message : `Unable to ${action.toLowerCase()} payment request`,
+                'error'
+              );
+            } finally {
+              setIsDeciding(false);
             }
           },
         },
@@ -270,6 +315,10 @@ export default function PaymentRequestDetailsScreen() {
     : '';
   const isPending = status.toLowerCase() === 'pending';
   const isApproved = status.toLowerCase() === 'approved';
+  // Only the raiser may cancel. Privileged roles that did not raise the
+  // request approve or reject instead — never cancel.
+  const canCancel = isPending && isRaiser;
+  const canDecide = isPending && isPrivileged && !isRaiser;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={['left', 'right', 'bottom']}>
@@ -429,11 +478,15 @@ export default function PaymentRequestDetailsScreen() {
             <View style={[styles.sectionCard, { backgroundColor: cardBg, borderColor: inputBorder }]}>
               <Text style={[styles.sectionTitle, { color: textPrimary }]}>Decision</Text>
               <Text style={[styles.sectionSub, { color: textSecondary }]}>
-                {isPending
-                  ? 'This request is awaiting review.'
-                  : isApproved
-                    ? 'This request has been approved and can be reverted by privileged roles.'
-                    : `This request is ${status.toLowerCase()}.`}
+                {canDecide
+                  ? 'Review this request and approve or reject it.'
+                  : canCancel
+                    ? 'You raised this request. You may cancel it while it is pending.'
+                    : isPending
+                      ? 'This request is awaiting review.'
+                      : isApproved
+                        ? 'This request has been approved and can be reverted by privileged roles.'
+                        : `This request is ${status.toLowerCase()}.`}
               </Text>
 
               <Text style={[styles.noteLabel, { color: textSecondary }]}>NOTE (OPTIONAL)</Text>
@@ -451,7 +504,41 @@ export default function PaymentRequestDetailsScreen() {
                 textAlignVertical="top"
               />
 
-              {isPending ? (
+              {canDecide ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#10B981' }]}
+                    onPress={() => handleDecisionRequest('approve')}
+                    disabled={isDeciding}
+                  >
+                    {isDeciding ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.actionButtonText}>Approve Payment Request</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#EF4444' }]}
+                    onPress={() => handleDecisionRequest('reject')}
+                    disabled={isDeciding}
+                  >
+                    {isDeciding ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.actionButtonText}>Reject Payment Request</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : null}
+
+              {canCancel ? (
                 <TouchableOpacity
                   style={[styles.actionButton, { backgroundColor: '#EF4444' }]}
                   onPress={handleCancelRequest}

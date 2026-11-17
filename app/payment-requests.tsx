@@ -27,6 +27,7 @@ export interface PaymentRequestsDto {
   id: string;
   amount: number;
   beneficiaryName: string;
+  beneficiaryId?: string;
   status: string;
   accountCount: number;
   transactionDate: string;
@@ -41,99 +42,66 @@ export interface PaymentRequestStatsDto {
   totalProcessedToday: number;
 }
 
-const DUMMY_PAYMENT_REQUESTS: PaymentRequestsDto[] = [
-  {
-    id: 'PR-8921',
-    amount: 75000,
-    beneficiaryName: 'Adewale Yusuf',
-    status: 'Pending',
-    accountCount: 3,
-    transactionDate: '2026-10-25T10:30:00Z',
-    membershipId: 'MEM-001',
-    requestAccounts: [
-      { accountId: '1', accountName: 'Cooperative Savings', amount: 30000, percentage: 40 },
-      { accountId: '2', accountName: 'Loan Repayment', amount: 35000, percentage: 46.7 },
-      { accountId: '3', accountName: 'Shares / Contributions', amount: 10000, percentage: 13.3 },
-    ],
-  },
-  {
-    id: 'PR-8922',
-    amount: 120000,
-    beneficiaryName: 'Aisha Bello',
-    status: 'Approved',
-    accountCount: 2,
-    transactionDate: '2026-10-24T14:15:00Z',
-    membershipId: 'MEM-004',
-    requestAccounts: [
-      { accountId: '1', accountName: 'Cooperative Savings', amount: 50000, percentage: 41.7 },
-      { accountId: '2', accountName: 'Loan Repayment', amount: 70000, percentage: 58.3 },
-    ],
-  },
-  {
-    id: 'PR-8923',
-    amount: 45000,
-    beneficiaryName: 'Chukwuma Eze',
-    status: 'Approved',
-    accountCount: 2,
-    transactionDate: '2026-10-22T09:00:00Z',
-    membershipId: 'MEM-007',
-    requestAccounts: [
-      { accountId: '1', accountName: 'Cooperative Savings', amount: 20000, percentage: 44.4 },
-      { accountId: '3', accountName: 'Shares / Contributions', amount: 25000, percentage: 55.6 },
-    ],
-  },
-  {
-    id: 'PR-8924',
-    amount: 60000,
-    beneficiaryName: 'Fatima Musa',
-    status: 'Rejected',
-    accountCount: 1,
-    transactionDate: '2026-10-20T16:45:00Z',
-    membershipId: 'MEM-012',
-    requestAccounts: [
-      { accountId: '2', accountName: 'Loan Repayment', amount: 60000, percentage: 100 },
-    ],
-  },
-];
+export interface PaginatedPaymentRequestsResponse {
+  items: PaymentRequestsDto[];
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  totalItems: number;
+  nextCursor?: string | null;
+}
 
 export default function PaymentRequestsScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const [requests, setRequests] = useState<PaymentRequestsDto[]>(DUMMY_PAYMENT_REQUESTS);
+  const [requests, setRequests] = useState<PaymentRequestsDto[]>([]);
+  const [paginationData, setPaginationData] = useState<PaginatedPaymentRequestsResponse | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([null]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [stats, setStats] = useState<PaymentRequestStatsDto>({
-    totalPending: 75000,
-    totalAmountRequested: 300000,
-    totalProcessedToday: 120000,
+    totalPending: 0,
+    totalAmountRequested: 0,
+    totalProcessedToday: 0,
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('All');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
   const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
   const textSecondary = isDark ? '#A0AEC0' : '#718096';
   const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
   const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
   const tableBorder = isDark ? '#2D3748' : '#F7FAFC';
   const primary = '#173581';
 
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async (cursor: string | null = null) => {
     setIsLoading(true);
+    setError(null);
     try {
+      const query = cursor ? `?lastId=${encodeURIComponent(cursor)}` : '';
       const [requestsRes, statsRes] = await Promise.all([
-        apiClient.get('/paymentrequests').catch(() => null),
-        apiClient.get('/paymentrequests/stats').catch(() => null),
+        apiClient.get(`/paymentrequests${query}`).catch(() => null),
+        cursor ? Promise.resolve(null) : apiClient.get('/paymentrequests/stats').catch(() => null),
       ]);
 
       if (requestsRes && requestsRes.ok) {
         const data = await requestsRes.json();
-        if (data && Array.isArray(data.items) && data.items.length > 0) {
-          setRequests(data.items);
-        }
+        setPaginationData({
+          items: data.items || [],
+          hasNextPage: Boolean(data.hasNextPage),
+          hasPreviousPage: Boolean(data.hasPreviousPage),
+          totalItems: data.totalItems ?? (data.items?.length || 0),
+          nextCursor: data.nextCursor ?? null,
+        });
+        setRequests(data.items || []);
+      } else if (!requestsRes) {
+        throw new Error('Unable to load payment requests');
       }
 
       if (statsRes && statsRes.ok) {
@@ -142,8 +110,9 @@ export default function PaymentRequestsScreen() {
           setStats(statsData);
         }
       }
-    } catch {
-      // Keep existing data or dummy fallback
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load payment requests');
+      setRequests([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -151,13 +120,32 @@ export default function PaymentRequestsScreen() {
   }, []);
 
   useEffect(() => {
-    void fetchRequests();
-  }, [fetchRequests]);
+    void fetchRequests(cursorHistory[currentIndex] ?? null);
+  }, [currentIndex, fetchRequests]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = () => {
     setIsRefreshing(true);
-    void fetchRequests();
+    setCursorHistory([null]);
+    setCurrentIndex(0);
+    void fetchRequests(null);
   };
+
+  const handleNextPage = () => {
+    const nextCursor = paginationData?.nextCursor;
+    if (paginationData?.hasNextPage && nextCursor) {
+      if (currentIndex === cursorHistory.length - 1) {
+        setCursorHistory((prev) => [...prev, nextCursor]);
+      }
+      setCurrentIndex((prev) => prev + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentIndex > 0) setCurrentIndex((prev) => prev - 1);
+  };
+
+  const isNextDisabled = !paginationData?.hasNextPage || isLoading;
+  const isPrevDisabled = currentIndex === 0 || isLoading;
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -203,16 +191,18 @@ export default function PaymentRequestsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: 'Payment Requests',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerTintColor: textPrimary,
-          headerStyle: { backgroundColor: bg },
-          headerShadowVisible: false,
+          headerShown: false,
         }}
       />
 
       <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={[styles.backButton, { borderColor: inputBorder, backgroundColor: cardBg }]}
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={20} color={textPrimary} />
+        </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: textPrimary }]}>Payment Requests</Text>
           <Text style={[styles.subtitle, { color: textSecondary }]}>
@@ -325,6 +315,18 @@ export default function PaymentRequestsScreen() {
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={primary} />
             </View>
+          ) : error ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
+              <Text style={[styles.emptyText, { color: textPrimary }]}>Failed to load requests</Text>
+              <Text style={[styles.emptySubText, { color: textSecondary }]}>{error}</Text>
+              <TouchableOpacity
+                style={[styles.retryButton, { backgroundColor: primary }]}
+                onPress={() => void fetchRequests(cursorHistory[currentIndex] ?? null)}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
           ) : filteredRequests.length > 0 ? (
             filteredRequests.map((req) => {
               const statusColor = getStatusColor(req.status);
@@ -389,6 +391,36 @@ export default function PaymentRequestsScreen() {
             </View>
           )}
         </View>
+
+        {/* Pagination */}
+        {paginationData && (requests.length > 0 || currentIndex > 0) && (
+          <View style={[styles.paginationCard, { backgroundColor: cardBg, borderColor: inputBorder }]}>
+            <View>
+              <Text style={[styles.paginationPageText, { color: textPrimary }]}>Page {currentIndex + 1}</Text>
+              <Text style={[styles.paginationTotalText, { color: textSecondary }]}>
+                {paginationData.totalItems} total request{paginationData.totalItems === 1 ? '' : 's'}
+              </Text>
+            </View>
+            <View style={styles.paginationButtonsRow}>
+              <TouchableOpacity
+                style={[styles.paginationBtn, { borderColor: inputBorder, backgroundColor: inputBg }, isPrevDisabled && styles.paginationBtnDisabled]}
+                disabled={isPrevDisabled}
+                onPress={handlePrevPage}
+              >
+                <Ionicons name="chevron-back" size={16} color={isPrevDisabled ? '#9CA3AF' : primary} />
+                <Text style={[styles.paginationBtnText, { color: isPrevDisabled ? '#9CA3AF' : primary }]}>Previous</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.paginationBtn, { borderColor: inputBorder, backgroundColor: inputBg }, isNextDisabled && styles.paginationBtnDisabled]}
+                disabled={isNextDisabled}
+                onPress={handleNextPage}
+              >
+                <Text style={[styles.paginationBtnText, { color: isNextDisabled ? '#9CA3AF' : primary }]}>Next</Text>
+                <Ionicons name="chevron-forward" size={16} color={isNextDisabled ? '#9CA3AF' : primary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -587,6 +619,68 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     fontWeight: '500',
+  },
+  emptySubText: {
+    marginTop: 4,
+    fontSize: 12,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
+  retryButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paginationCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 24,
+  },
+  paginationPageText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  paginationTotalText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  paginationButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  paginationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  paginationBtnDisabled: {
+    opacity: 0.6,
+  },
+  paginationBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,

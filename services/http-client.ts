@@ -1,7 +1,10 @@
 import { router } from 'expo-router';
 
-import { getValidAccessToken, logout } from './authService';
+import { AuthError, fetchWithTimeout, getValidAccessToken, logout } from './authService';
 import { showGlobalToast } from '@/context/ToastContext';
+
+/** API calls time out instead of hanging forever on a dead connection. */
+const API_TIMEOUT_MS = 30000;
 
 type RequestInterceptor = (config: RequestInit & { url: string }) => Promise<RequestInit & { url: string }>;
 type ResponseInterceptor = (response: Response, config: RequestInit & { url: string }) => Promise<Response>;
@@ -28,10 +31,15 @@ class ApiClient {
                 'Content-Type': 'application/json',
             };
         } catch (error) {
-            // Token refresh failed - logout and redirect to login
+            if (error instanceof AuthError && error.kind === 'network') {
+                // Transient: keep the session, let the caller show a retry UI.
+                throw error;
+            }
+            // Dead session or misconfigured build - logout and redirect to login
             console.error('Failed to get valid access token, redirecting to login:', error);
-            await this.handleAuthFailure('Session expired. Please sign in with your credentials.');
-            throw error;
+            const message = error instanceof AuthError ? error.message : 'Session expired. Please sign in with your credentials.';
+            await this.handleAuthFailure(message);
+            throw error instanceof AuthError ? error : new AuthError('no-session', message);
         }
     }
 
@@ -66,13 +74,22 @@ class ApiClient {
                 },
             };
 
-            const response = await fetch(fullUrl, config);
+            let response: Response;
+            try {
+                response = await fetchWithTimeout(fullUrl, config, API_TIMEOUT_MS);
+            } catch (error) {
+                if (error instanceof AuthError && error.kind === 'network') {
+                    // Transient connectivity problem: warn, keep the session.
+                    showGlobalToast(error.message, 'warning');
+                }
+                throw error;
+            }
 
             // If we get 401, try one more time with a fresh token
             if (response.status === 401) {
                 console.warn('Got 401, attempting token refresh and retry...');
                 try {
-                    // Force refresh the token
+                    // Single-flight: concurrent 401s share one Keycloak refresh.
                     const { refreshAccessToken } = await import('./authService');
                     const newToken = await refreshAccessToken();
 
@@ -85,28 +102,34 @@ class ApiClient {
                         },
                     };
 
-                    const retryResponse = await fetch(fullUrl, retryConfig);
+                    const retryResponse = await fetchWithTimeout(fullUrl, retryConfig, API_TIMEOUT_MS);
 
                     if (retryResponse.status === 401) {
                         // Still 401 after refresh, auth has fully failed
                         await this.handleAuthFailure('Authentication expired. Please sign in again.');
-                        throw new Error('Authentication failed after token refresh');
+                        throw new AuthError('refresh-rejected', 'Authentication expired. Please sign in again.');
                     }
 
                     return retryResponse;
                 } catch (refreshError) {
-                    await this.handleAuthFailure('Session expired. Please sign in with your credentials.');
-                    throw refreshError;
+                    if (refreshError instanceof AuthError && refreshError.kind === 'network') {
+                        showGlobalToast(refreshError.message, 'warning');
+                        throw refreshError;
+                    }
+                    const message =
+                        refreshError instanceof AuthError
+                            ? refreshError.message
+                            : 'Session expired. Please sign in with your credentials.';
+                    await this.handleAuthFailure(message);
+                    throw refreshError instanceof AuthError
+                        ? refreshError
+                        : new AuthError('no-session', message);
                 }
             }
 
             return response;
         } catch (error) {
-            // Re-throw if it's our own auth error
-            if ((error as Error).message?.includes('Authentication failed')) {
-                throw error;
-            }
-            // Network or other errors - re-throw as-is
+            // Typed auth errors already produced their toast/redirect above.
             throw error;
         }
     }
@@ -136,3 +159,14 @@ class ApiClient {
 const BASE_API_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
 export const apiClient = new ApiClient(BASE_API_URL);
 export default apiClient;
+
+/**
+ * Resolve a backend file path (e.g. `/api/Files/{id}`) to an absolute URL
+ * the Image component can load. Pass-through for absolute URLs.
+ */
+export function resolveFileUrl(path?: string | null): string | null {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    const root = BASE_API_URL.replace(/\/api\/?$/, '');
+    return `${root}${path.startsWith('/') ? path : `/${path}`}`;
+}

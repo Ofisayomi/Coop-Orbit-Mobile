@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/context/ToastContext';
-import { getCurrentUserRoles, PRIVILEGED_MEMBER_ROLES } from '@/services/authService';
+import { getCurrentUserRoles, PRIVILEGED_MEMBER_ROLES, withExternalActivity } from '@/services/authService';
 import {
   SupportService,
   type SupportAttachment,
@@ -165,11 +165,11 @@ const TicketDetailScreen = () => {
 
   const handlePickAttachment = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
+      const result = await withExternalActivity(() => DocumentPicker.getDocumentAsync({
         type: ['image/jpeg', 'image/png', 'application/pdf'],
         copyToCacheDirectory: false,
         multiple: false,
-      });
+      }));
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       if ((asset.size ?? 0) > MAX_ATTACHMENT_BYTES) {

@@ -5,7 +5,9 @@ import React, { useEffect } from 'react';
 import 'react-native-reanimated';
 import * as SecureStore from 'expo-secure-store';
 import { AppThemeProvider, useAppTheme } from '@/context/ThemeContext';
+import { AuthLockProvider, useAppLock } from '@/context/AuthLockContext';
 import { ToastProvider } from '@/context/ToastContext';
+import LockScreenModal from '@/components/LockScreenModal';
 import { setupAppNotificationListeners } from '@/services/expo-notification';
 
 export const unstable_settings = {
@@ -27,6 +29,7 @@ function RootLayoutNav() {
       <Stack initialRouteName="login">
         <Stack.Screen name="index" options={{ headerShown: false, title: SecureStore.getItem('org_name') ?? '' }} />
         <Stack.Screen name="login" options={{ headerShown: false, title: SecureStore.getItem('org_name') ?? '' }} />
+        <Stack.Screen name="setup-pin" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="make-payment" options={{ headerShown: false }} />
         <Stack.Screen name="request-loan" options={{ headerShown: false }} />
@@ -37,6 +40,7 @@ function RootLayoutNav() {
         <Stack.Screen name="payment-request-details" options={{ headerShown: false }} />
         <Stack.Screen name="members" options={{ headerShown: false }} />
         <Stack.Screen name="member-details" options={{ headerShown: false }} />
+        <Stack.Screen name="add-member" options={{ headerShown: false }} />
         <Stack.Screen name="support-tickets" options={{ headerShown: false }} />
         <Stack.Screen name="create-ticket" options={{ headerShown: false }} />
         <Stack.Screen name="ticket-detail" options={{ headerShown: false }} />
@@ -47,11 +51,20 @@ function RootLayoutNav() {
   );
 }
 
+function LockGate() {
+  const { isLocked } = useAppLock();
+  if (!isLocked) return null;
+  return <LockScreenModal />;
+}
+
 export default function RootLayout() {
   return (
     <AppThemeProvider>
       <ToastProvider>
-        <RootLayoutNav />
+        <AuthLockProvider>
+          <RootLayoutNav />
+          <LockGate />
+        </AuthLockProvider>
       </ToastProvider>
     </AppThemeProvider>
   );

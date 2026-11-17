@@ -1,18 +1,98 @@
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
 
-const KEYCLOAK_URL = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
-const KEYCLOAK_REALM = process.env.EXPO_PUBLIC_KEYCLOAK_REALM;
-const KEYCLOAK_CLIENT_ID = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID;
-
-const TOKEN_ENDPOINT = `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token`;
-const LOGOUT_ENDPOINT = `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/logout`;
+/** Keycloak configuration is read per call via {@link getKeycloakConfig} so a missing build setting fails fast. */
 
 interface JWTPayload {
     exp: number;
     iat: number;
     sub: string;
     [key: string]: any;
+}
+
+/**
+ * Typed authentication failure. `message` is always a user-facing string so
+ * callers can surface it directly in a toast; `kind` tells the caller whether
+ * the session is dead (log out) or the problem is transient (warn and retry).
+ */
+export type AuthErrorKind = 'no-session' | 'refresh-rejected' | 'network' | 'config';
+
+export class AuthError extends Error {
+    kind: AuthErrorKind;
+    /** 'warning' for transient problems, 'error' when the user must sign in again. */
+    severity: 'warning' | 'error';
+
+    constructor(kind: AuthErrorKind, userMessage: string) {
+        super(userMessage);
+        this.name = 'AuthError';
+        this.kind = kind;
+        this.severity = kind === 'network' ? 'warning' : 'error';
+    }
+}
+
+export interface KeycloakConfig {
+    url: string;
+    realm: string;
+    clientId: string;
+}
+
+/** Read and validate Keycloak configuration. Throws a `config` AuthError when incomplete. */
+export function getKeycloakConfig(): KeycloakConfig {
+    const url = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
+    const realm = process.env.EXPO_PUBLIC_KEYCLOAK_REALM;
+    const clientId = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID;
+    if (!url || !realm || !clientId) {
+        throw new AuthError('config', 'Sign-in is not configured on this build. Please contact support.');
+    }
+    return { url, realm, clientId };
+}
+
+export function getTokenEndpoint(): string {
+    const config = getKeycloakConfig();
+    return `${config.url}/realms/${config.realm}/protocol/openid-connect/token`;
+}
+
+function getLogoutEndpoint(): string {
+    const config = getKeycloakConfig();
+    return `${config.url}/realms/${config.realm}/protocol/openid-connect/logout`;
+}
+
+/** fetch with a timeout. Abort/timeout and transport failures surface as `network` AuthErrors. */
+export async function fetchWithTimeout(
+    url: string,
+    init: RequestInit = {},
+    timeoutMs = 25000,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (error instanceof AuthError) throw error;
+        const aborted = (error as Error)?.name === 'AbortError';
+        throw new AuthError(
+            'network',
+            aborted
+                ? 'The request timed out. Please check your connection and try again.'
+                : 'Could not reach the server. Please check your connection and try again.',
+        );
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * Access tokens live in memory (never on disk) and are refreshed silently.
+ * The refresh token stays in SecureStore so a cold start can re-authenticate.
+ */
+let _memoryAccessToken: string | null = null;
+
+export function setCachedAccessToken(token: string | null): void {
+    _memoryAccessToken = token;
+}
+
+export function getCachedAccessToken(): string | null {
+    return _memoryAccessToken;
 }
 
 /**
@@ -41,58 +121,111 @@ export async function getStoredTokens(): Promise<{ accessToken: string | null; r
 }
 
 /**
- * Use the refresh token to obtain a new access token from Keycloak.
- * Returns the new access token on success, throws on failure.
+ * Single-flight guard for token refresh. Keycloak rotates refresh tokens on
+ * use, so concurrent refreshes would race: the losers present an already
+ * rotated-out token and get `invalid_grant` (or trigger reuse revocation).
+ * All concurrent callers share one in-flight refresh instead.
  */
-export async function refreshAccessToken(): Promise<string | null> {
+let inflightRefresh: Promise<string> | null = null;
+
+/**
+ * Use the refresh token to obtain a new access token from Keycloak.
+ * Resolves with the new access token; throws a typed {@link AuthError}:
+ * - `no-session` when there is no refresh token to use,
+ * - `refresh-rejected` when Keycloak rejects it (expired/revoked session),
+ * - `network` when Keycloak is unreachable or a non-auth error occurs.
+ */
+export function refreshAccessToken(): Promise<string> {
+    if (!inflightRefresh) {
+        inflightRefresh = performRefresh().finally(() => {
+            inflightRefresh = null;
+        });
+    }
+    return inflightRefresh;
+}
+
+async function performRefresh(): Promise<string> {
     const { refreshToken } = await getStoredTokens();
     if (!refreshToken) {
-        return null;
+        throw new AuthError('no-session', 'Your session has expired. Please sign in again.');
     }
 
+    const clientId = getKeycloakConfig().clientId;
     const body = new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: KEYCLOAK_CLIENT_ID || 'coop-assist-mobile',
+        client_id: clientId,
         refresh_token: refreshToken,
     }).toString();
 
-    const response = await fetch(TOKEN_ENDPOINT!, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body,
-    });
+    let response: Response;
+    try {
+        response = await fetchWithTimeout(
+            getTokenEndpoint(),
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body,
+            },
+            25000,
+        );
+    } catch (error) {
+        if (error instanceof AuthError) throw error;
+        throw new AuthError('network', 'Could not reach the sign-in server. Please check your connection and try again.');
+    }
 
     if (!response.ok) {
-        const error = await response.text();
-        return null;
+        // Keycloak answers an expired/revoked/rotated-out refresh token with
+        // 400 invalid_grant. Anything else is treated as transient.
+        if (response.status === 400 || response.status === 401) {
+            let detail = '';
+            try {
+                detail = await response.text();
+            } catch {
+                // Ignore body read failures; the status already decides.
+            }
+            console.warn('Keycloak rejected the refresh token:', response.status, detail);
+            throw new AuthError('refresh-rejected', 'Your session has expired. Please sign in again.');
+        }
+        console.warn('Keycloak token endpoint returned HTTP', response.status);
+        throw new AuthError('network', 'The sign-in server is having issues. Please try again in a moment.');
     }
 
     const data = await response.json();
+    if (!data?.access_token) {
+        throw new AuthError('refresh-rejected', 'Your session has expired. Please sign in again.');
+    }
 
-    // Persist new tokens
-    await SecureStore.setItemAsync('access_token', data.access_token);
+    // Keycloak rotates the refresh token on every use: persist it, keep the
+    // access token in memory only.
     if (data.refresh_token) {
         await SecureStore.setItemAsync('refresh_token', data.refresh_token);
     }
+    setCachedAccessToken(data.access_token as string);
 
-    return data.access_token;
+    return data.access_token as string;
 }
 
 /**
  * Get a valid access token. If the current one is expired/expiring, refresh it.
- * Throws if refresh fails (caller should redirect to login).
+ * Never resolves null: throws a typed {@link AuthError} instead.
  */
-export async function getValidAccessToken(): Promise<string | null> {
-    const { accessToken } = await getStoredTokens();
+export async function getValidAccessToken(): Promise<string> {
+    if (_memoryAccessToken && !isTokenExpiredOrExpiring(_memoryAccessToken)) {
+        return _memoryAccessToken;
+    }
 
+    // Cold start (or rotated-out memory token): fall back to a stored token
+    // once, then promote it to memory. Afterwards everything is in-memory.
+    const { accessToken } = await getStoredTokens();
     if (accessToken && !isTokenExpiredOrExpiring(accessToken)) {
+        setCachedAccessToken(accessToken);
         return accessToken;
     }
 
-    // Token expired or expiring - try refresh
-    return await refreshAccessToken();
+    // Token expired or expiring - try refresh (result stays in memory)
+    return refreshAccessToken();
 }
 
 /**
@@ -100,23 +233,39 @@ export async function getValidAccessToken(): Promise<string | null> {
  * then clear all stored tokens.
  */
 export async function logout(): Promise<void> {
+    setCachedAccessToken(null);
     try {
         const { refreshToken } = await getStoredTokens();
 
         if (refreshToken) {
-            const body = new URLSearchParams({
-                client_id: KEYCLOAK_CLIENT_ID || 'coop-assist-mobile',
-                refresh_token: refreshToken,
-            }).toString();
+            let endpoint: string | null = null;
+            let clientId = 'coop-assist-mobile';
+            try {
+                const config = getKeycloakConfig();
+                endpoint = `${config.url}/realms/${config.realm}/protocol/openid-connect/logout`;
+                clientId = config.clientId;
+            } catch {
+                // Misconfigured build: skip the server call, still clear local state below.
+            }
+            if (endpoint) {
+                const body = new URLSearchParams({
+                    client_id: clientId,
+                    refresh_token: refreshToken,
+                }).toString();
 
-            // Best-effort: logout from Keycloak server
-            await fetch(LOGOUT_ENDPOINT!, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body,
-            });
+                // Best-effort: logout from Keycloak server (revokes the session server-side)
+                await fetchWithTimeout(
+                    endpoint,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body,
+                    },
+                    15000,
+                );
+            }
         }
     } catch (error) {
         console.error('Error during Keycloak logout:', error);
@@ -134,33 +283,74 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * Try to silently authenticate using refresh token.
- * Returns true if successful (tokens refreshed), false if not possible.
+ * Tracks an in-flight system UI flow (gallery/document picker, camera) that
+ * temporarily backgrounds the app. While set, AppState transitions must NOT
+ * arm or trip the biometric app lock — the user never actually left the app,
+ * and locking here would bounce them to login and wipe in-progress forms.
  */
-export async function trySilentRefresh(): Promise<boolean> {
+let _externalActivityCount = 0;
+
+export function beginExternalActivity(): void {
+    _externalActivityCount += 1;
+}
+
+export function endExternalActivity(): void {
+    _externalActivityCount = Math.max(0, _externalActivityCount - 1);
+}
+
+export function isExternalActivityActive(): boolean {
+    return _externalActivityCount > 0;
+}
+
+/** Run `fn` with the app-lock background/foreground handling suspended. */
+export async function withExternalActivity<T>(fn: () => Promise<T>): Promise<T> {
+    beginExternalActivity();
+    try {
+        return await fn();
+    } finally {
+        endExternalActivity();
+    }
+}
+
+export type SilentRefreshOutcome = 'ok' | 'no-session' | 'offline';
+
+/**
+ * Try to silently authenticate using refresh token.
+ * - 'ok': a usable access token exists (refreshed if needed).
+ * - 'no-session': no usable session — the caller should send the user to login.
+ * - 'offline': the device appears to be offline — keep the user where they
+ *   are and surface a warning instead of logging them out.
+ */
+export async function trySilentRefresh(): Promise<SilentRefreshOutcome> {
     try {
         const { refreshToken, accessToken } = await getStoredTokens();
 
-        if (!refreshToken) return false;
+        if (!refreshToken) return 'no-session';
 
         // If access token is still valid, no need to refresh
         if (accessToken && !isTokenExpiredOrExpiring(accessToken)) {
-            return true;
+            return 'ok';
         }
 
         // Try to use refresh token — report whether it actually worked so
         // callers don't offer biometric login for a dead session.
-        const newToken = await refreshAccessToken();
-        return newToken != null;
-    } catch {
-        return false;
+        await refreshAccessToken();
+        return 'ok';
+    } catch (error) {
+        if (error instanceof AuthError && error.kind === 'network') return 'offline';
+        return 'no-session';
     }
 }
 
 let _isBiometricVerifiedInSession = false;
 
-export function isBiometricSessionVerified(): boolean {
-    return _isBiometricVerifiedInSession;
+async function getTokenForClaims(): Promise<string | null> {
+    try {
+        return await getValidAccessToken();
+    } catch {
+        const { accessToken } = await getStoredTokens();
+        return accessToken;
+    }
 }
 
 export function setBiometricSessionVerified(verified: boolean): void {
@@ -176,7 +366,7 @@ export const PRIVILEGED_MEMBER_ROLES = ['Admin', 'Accountant', 'Secretary'];
  * Read the signed-in user's roles out of the Keycloak access token.
  */
 export async function getCurrentUserRoles(): Promise<string[]> {
-    const { accessToken } = await getStoredTokens();
+    const accessToken = await getTokenForClaims();
     if (!accessToken) return [];
     try {
         const decoded = jwtDecode<Record<string, any>>(accessToken);
@@ -196,7 +386,7 @@ export async function getCurrentUserRoles(): Promise<string[]> {
  * Read the signed-in user's id (Keycloak `sub` claim) out of the access token.
  */
 export async function getCurrentUserId(): Promise<string | null> {
-    const { accessToken } = await getStoredTokens();
+    const accessToken = await getTokenForClaims();
     if (!accessToken) return null;
     try {
         const decoded = jwtDecode<Record<string, any>>(accessToken);
@@ -204,73 +394,6 @@ export async function getCurrentUserId(): Promise<string | null> {
     } catch {
         return null;
     }
-}
-
-/**
- * How long the app may stay in the background before the biometric
- * session lock re-engages. Short trips away from the app — e.g. tapping a
- * notification, or opening the authenticator app to copy a 2FA code while
- * signing in — must not force re-authentication.
- */
-export const APP_LOCK_GRACE_MS = 2 * 60 * 1000;
-
-const APP_BACKGROUNDED_AT_KEY = 'app_backgrounded_at';
-
-let _lastBackgroundedAt: number | null = null;
-
-/**
- * Record the moment the app went to the background. Persisted so the grace
- * period survives an OS process restart (e.g. the app was recycled while
- * the user tapped a notification or fetched a 2FA code).
- */
-export async function markAppBackgrounded(now = Date.now()): Promise<void> {
-    _lastBackgroundedAt = now;
-    try {
-        await SecureStore.setItemAsync(APP_BACKGROUNDED_AT_KEY, now.toString());
-    } catch (error) {
-        console.error('Error persisting app background timestamp:', error);
-    }
-}
-
-/** Clear the background timestamp (called when returning within the grace period). */
-export async function clearAppBackgrounded(): Promise<void> {
-    _lastBackgroundedAt = null;
-    try {
-        await SecureStore.deleteItemAsync(APP_BACKGROUNDED_AT_KEY);
-    } catch (error) {
-        console.error('Error clearing persisted app background timestamp:', error);
-    }
-}
-
-/**
- * True when the app was backgrounded longer than the grace period.
- * A fresh launch (no timestamp recorded) counts as expired so a cold
- * start always begins locked; the login screen then unlocks via biometrics.
- */
-export function isAppLockExpired(now = Date.now()): boolean {
-    if (_lastBackgroundedAt == null) return true;
-    return now - _lastBackgroundedAt > APP_LOCK_GRACE_MS;
-}
-
-/**
- * True when the app returned within the grace period, reading the persisted
- * timestamp when the in-memory one was lost to a process restart. A return
- * with no recorded backgrounding (genuine cold start) is NOT within grace.
- */
-export async function isWithinAppLockGrace(now = Date.now()): Promise<boolean> {
-    let backgroundedAt = _lastBackgroundedAt;
-    if (backgroundedAt == null) {
-        try {
-            const stored = await SecureStore.getItemAsync(APP_BACKGROUNDED_AT_KEY);
-            const parsed = stored != null ? Number(stored) : NaN;
-            backgroundedAt = Number.isFinite(parsed) ? parsed : null;
-            _lastBackgroundedAt = backgroundedAt;
-        } catch (error) {
-            console.error('Error reading persisted app background timestamp:', error);
-            return false;
-        }
-    }
-    return backgroundedAt != null && now - backgroundedAt < APP_LOCK_GRACE_MS;
 }
 
 /**
@@ -283,6 +406,8 @@ export async function ensureFreshTokenAfterBiometrics(thresholdSeconds = 120): P
     success: boolean;
     refreshed: boolean;
     error?: string;
+    /** True when the failure is transient (offline) — show a warning, do not log out. */
+    offline?: boolean;
 }> {
     try {
         const { refreshToken, accessToken } = await getStoredTokens();
@@ -306,6 +431,15 @@ export async function ensureFreshTokenAfterBiometrics(thresholdSeconds = 120): P
                 return { success: true, refreshed: true };
             } catch (refreshErr) {
                 console.error('Failed to refresh token after biometrics:', refreshErr);
+                if (refreshErr instanceof AuthError && refreshErr.kind === 'network') {
+                    // Transient: keep the session; the next request will retry.
+                    return {
+                        success: false,
+                        refreshed: false,
+                        error: 'You appear to be offline. Please check your connection and try again.',
+                        offline: true,
+                    };
+                }
                 await logout();
                 setBiometricSessionVerified(false);
                 return {
@@ -321,6 +455,14 @@ export async function ensureFreshTokenAfterBiometrics(thresholdSeconds = 120): P
         return { success: true, refreshed: false };
     } catch (err) {
         console.error('Unexpected error in ensureFreshTokenAfterBiometrics:', err);
+        if (err instanceof AuthError && err.kind === 'network') {
+            return {
+                success: false,
+                refreshed: false,
+                error: 'You appear to be offline. Please check your connection and try again.',
+                offline: true,
+            };
+        }
         setBiometricSessionVerified(false);
         return {
             success: false,

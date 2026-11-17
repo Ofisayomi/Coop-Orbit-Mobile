@@ -172,17 +172,19 @@ const LoanManagementScreen = () => {
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: 'Loan Management',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerTintColor: textPrimary,
-          headerStyle: { backgroundColor: bg },
-          headerShadowVisible: false,
+          headerShown: false,
         }}
       />
 
       <View style={styles.header}>
-        <View>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={[styles.backButton, { borderColor: inputBorder, backgroundColor: cardBg }]}
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={20} color={textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: textPrimary }]}>Loan Management</Text>
           <Text style={[styles.subtitle, { color: textSecondary }]}>Manage Loans</Text>
         </View>
@@ -402,10 +404,19 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
+    gap: 12,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 24,

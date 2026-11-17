@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -25,14 +24,25 @@ import { WebView } from 'react-native-webview';
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AccountService } from '@/services/accountService';
+import { hasAppPin } from '@/services/app-pin';
 import {
+  AuthError,
   ensureFreshTokenAfterBiometrics,
   getStoredTokens,
   setBiometricSessionVerified,
   trySilentRefresh
 } from '@/services/authService';
 import { consumePendingNotificationRoute, registerDeviceTokenWithBackend } from '@/services/expo-notification';
-import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
+import {
+  buildAuthorizationUrl,
+  clearOAuthSession,
+  exchangeCodeForTokens,
+  generatePKCE,
+  generateState,
+  makeAppRedirectUri,
+  restoreOAuthSession,
+  saveOAuthSession,
+} from '@/services/oauth';
 
 
 const LoginScreen = () => {
@@ -79,15 +89,11 @@ const LoginScreen = () => {
     };
   }, []);
 
-  // Keycloak configuration
+  // Keycloak authorization-server base URL, used only to recognise Keycloak
+  // pages in the WebView. Full client config lives in services/oauth.
   const keycloakUrl = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
-  const keycloakRealm = process.env.EXPO_PUBLIC_KEYCLOAK_REALM;
-  const keycloakClientId = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID || 'coop-assist-mobile';
 
-  const redirectUri = makeRedirectUri({
-    scheme: 'com.onersofties.coopassistmobile',
-    path: 'oauth'
-  });
+  const redirectUri = makeAppRedirectUri();
 
   // How long a login left hanging (e.g. user switched to the authenticator
   // app for a 2FA code and the OS killed ours) is still resumed instead of
@@ -99,13 +105,7 @@ const LoginScreen = () => {
     codeVerifierRef.current = null;
     currentUrlRef.current = null;
     isProcessingCallbackRef.current = false;
-    await Promise.all([
-      SecureStore.deleteItemAsync('oauth_state'),
-      SecureStore.deleteItemAsync('code_verifier'),
-      SecureStore.deleteItemAsync('oauth_auth_url'),
-      SecureStore.deleteItemAsync('oauth_current_url'),
-      SecureStore.deleteItemAsync('oauth_started_at'),
-    ]);
+    await clearOAuthSession();
   };
 
   // Restore OAuth session state on mount. If the app was backgrounded or
@@ -118,13 +118,8 @@ const LoginScreen = () => {
   useEffect(() => {
     const restoreAuthSession = async () => {
       try {
-        const [storedState, storedVerifier, storedAuthUrl, storedCurrentUrl, storedStartedAt] = await Promise.all([
-          SecureStore.getItemAsync('oauth_state'),
-          SecureStore.getItemAsync('code_verifier'),
-          SecureStore.getItemAsync('oauth_auth_url'),
-          SecureStore.getItemAsync('oauth_current_url'),
-          SecureStore.getItemAsync('oauth_started_at'),
-        ]);
+        const { state: storedState, codeVerifier: storedVerifier, authUrl: storedAuthUrl, currentUrl: storedCurrentUrl, startedAt: storedStartedAt } =
+          await restoreOAuthSession();
         if (storedState) oauthStateRef.current = storedState;
         if (storedVerifier) codeVerifierRef.current = storedVerifier;
         const resumeUrl = storedCurrentUrl ?? storedAuthUrl;
@@ -165,6 +160,11 @@ const LoginScreen = () => {
   const navigateAfterAuth = async () => {
     setBiometricSessionVerified(true);
     void registerDeviceTokenWithBackend();
+    // First login ever: force App PIN setup before entering the app.
+    if (!(await hasAppPin())) {
+      router.replace('/setup-pin');
+      return;
+    }
     const pending = await consumePendingNotificationRoute();
     if (pending) {
       router.replace(pending);
@@ -183,8 +183,12 @@ const LoginScreen = () => {
       // Prompting first and failing afterwards looks like a biometric
       // failure and interrupts users who must sign in with credentials
       // (e.g. mid-login after switching to the authenticator app for 2FA).
-      const hasSession = await trySilentRefresh();
-      if (!hasSession) {
+      const sessionStatus = await trySilentRefresh();
+      if (sessionStatus === 'offline') {
+        showToast('You appear to be offline. Please check your connection and try again.', 'warning');
+        return;
+      }
+      if (sessionStatus !== 'ok') {
         setCanUseBiometrics(false);
         showToast('Your session has expired. Please sign in with your username and password.', 'info');
         return;
@@ -207,9 +211,9 @@ const LoginScreen = () => {
         } else {
           showToast(
             tokenResult.error || 'Your session has expired. Please sign in with username and password.',
-            'error'
+            tokenResult.offline ? 'warning' : 'error'
           );
-          setCanUseBiometrics(false);
+          if (!tokenResult.offline) setCanUseBiometrics(false);
         }
       } else {
         // Fingerprint failed or was cancelled
@@ -294,64 +298,17 @@ const LoginScreen = () => {
     showWebViewRef.current = showWebView;
   }, [showWebView]);
 
-  // Helper function to generate a random string for PKCE/state.
-  // Uses expo-crypto random bytes (not Math.random) so the verifier and
-  // state are unpredictable.
-  const generateRandomString = async (length: number) => {
-    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const bytes = await Crypto.getRandomBytesAsync(length);
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset.charAt(bytes[i] % charset.length);
-    }
-    return result;
-  };
-
-  // Helper function to generate PKCE code verifier and challenge
-  const generatePKCE = async () => {
-    const codeVerifier = await generateRandomString(64);
-    const hash = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      codeVerifier,
-      { encoding: 'base64' as any }
-    );
-    const codeChallenge = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    return { codeVerifier, codeChallenge };
-  };
-
-  const generateState = () => generateRandomString(32);
-
   const handleOAuthCallback = async (code: string) => {
     if (isProcessingCallbackRef.current) return;
     isProcessingCallbackRef.current = true;
 
     try {
-      let verifier = codeVerifierRef.current;
-      if (!verifier) {
-        verifier = await SecureStore.getItemAsync('code_verifier');
-      }
+      const restored = await restoreOAuthSession();
+      const verifier = codeVerifierRef.current ?? restored.codeVerifier;
 
-      if (!verifier) throw new Error('Code verifier not found');
+      if (!verifier) throw new Error('Code verifier not found. Please sign in again.');
 
-      const discovery = {
-        authorizationEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`,
-        tokenEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/token`,
-      };
-
-      const tokenResponse = await exchangeCodeAsync(
-        {
-          clientId: keycloakClientId,
-          code: code,
-          redirectUri: redirectUri,
-          extraParams: { code_verifier: verifier }
-        },
-        discovery as any
-      );
-
-      await SecureStore.setItemAsync('access_token', tokenResponse.accessToken);
-      if (tokenResponse.refreshToken) {
-        await SecureStore.setItemAsync('refresh_token', tokenResponse.refreshToken);
-      }
+      await exchangeCodeForTokens({ code, codeVerifier: verifier, redirectUri });
 
       const orgInfo = await AccountService.getOrganizationInfo();
       await SecureStore.setItemAsync('org_name', orgInfo?.organizationName ?? '');
@@ -360,11 +317,20 @@ const LoginScreen = () => {
       await cleanupAuthSession();
       await promptEnableBiometricsIfNeeded();
     } catch (error) {
-      console.error('Token exchange failed:', error);
+      
       setShowWebView(false);
       await cleanupAuthSession();
       setLoading(false);
-      showToast('Authentication failed. Please try again.', 'error');
+      if (error instanceof AuthError) {
+        showToast(error.message, error.severity);
+      } else {
+        showToast(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Authentication failed. Please try again.',
+          'error',
+        );
+      }
     }
   };
 
@@ -421,37 +387,24 @@ const LoginScreen = () => {
       const state = await generateState();
       oauthStateRef.current = state;
 
-      const baseUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`;
-      const params = new URLSearchParams({
-        client_id: keycloakClientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'openid profile offline_access',
-        state: state,
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256',
-      });
-      const fullAuthUrl = `${baseUrl}?${params.toString()}`;
+      const fullAuthUrl = buildAuthorizationUrl({ state, codeChallenge, redirectUri });
 
       // Persist the whole attempt so backgrounding the app (e.g. switching
       // to the authenticator app for 2FA) or an OS kill doesn't lose it.
       // oauth_current_url tracks the exact Keycloak page reached below, so a
       // return resumes mid-flow (OTP screen), not at the username screen.
       currentUrlRef.current = fullAuthUrl;
-      await Promise.all([
-        SecureStore.setItemAsync('oauth_state', state),
-        SecureStore.setItemAsync('code_verifier', codeVerifier),
-        SecureStore.setItemAsync('oauth_auth_url', fullAuthUrl),
-        SecureStore.setItemAsync('oauth_current_url', fullAuthUrl),
-        SecureStore.setItemAsync('oauth_started_at', Date.now().toString()),
-      ]);
+      await saveOAuthSession({ state, codeVerifier, authUrl: fullAuthUrl });
 
       setAuthUrl(fullAuthUrl);
       setShowWebView(true);
     } catch (error) {
       console.error('OAuth error:', error);
       setLoading(false);
-      showToast('Could not initialize login flow. Please try again.', 'error');
+      showToast(
+        error instanceof AuthError ? error.message : 'Could not initialize login flow. Please try again.',
+        'error',
+      );
     }
   };
 

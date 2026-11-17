@@ -47,4 +47,20 @@ export const PaymentRequestService = {
     });
     if (!response.ok) throw await readErrorMessage('Unable to cancel payment request')(response);
   },
+
+  /** Approve a pending payment request (privileged roles only). */
+  async approvePaymentRequest(id: string, note = ''): Promise<void> {
+    const response = await apiClient.patch(`/paymentrequests/${id}/approve`, {
+      body: JSON.stringify({ note }),
+    });
+    if (!response.ok) throw await readErrorMessage('Unable to approve payment request')(response);
+  },
+
+  /** Reject a pending payment request (privileged roles only). */
+  async rejectPaymentRequest(id: string, note = ''): Promise<void> {
+    const response = await apiClient.patch(`/paymentrequests/${id}/reject`, {
+      body: JSON.stringify({ note }),
+    });
+    if (!response.ok) throw await readErrorMessage('Unable to reject payment request')(response);
+  },
 };

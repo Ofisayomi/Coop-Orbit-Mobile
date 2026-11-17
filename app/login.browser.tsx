@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
@@ -23,10 +22,20 @@ import {
 import { Colors } from '@/constants/theme';
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { ensureFreshTokenAfterBiometrics, setBiometricSessionVerified, trySilentRefresh } from '@/services/authService';
+import { hasAppPin } from '@/services/app-pin';
+import { AuthError, ensureFreshTokenAfterBiometrics, setBiometricSessionVerified, trySilentRefresh } from '@/services/authService';
 import { consumePendingNotificationRoute, registerDeviceTokenWithBackend } from '@/services/expo-notification';
 // import { authorize } from 'react-native-app-auth';
-import { exchangeCodeAsync, makeRedirectUri } from 'expo-auth-session';
+import {
+  buildAuthorizationUrl,
+  clearOAuthSession,
+  exchangeCodeForTokens,
+  generatePKCE,
+  generateState,
+  makeAppRedirectUri,
+  restoreOAuthSession,
+  saveOAuthSession,
+} from '@/services/oauth';
 
 
 const LoginScreen = () => {
@@ -61,7 +70,7 @@ const LoginScreen = () => {
         appState?.current?.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        console.log('App has come to the foreground!');
+        
       }
       appState.current = nextAppState;
     });
@@ -76,28 +85,17 @@ const LoginScreen = () => {
     };
   }, []);
 
-  // Keycloak configuration
-  const keycloakUrl = process.env.EXPO_PUBLIC_KEYCLOAK_URL;
-  const keycloakRealm = process.env.EXPO_PUBLIC_KEYCLOAK_REALM;
-  const keycloakClientId = process.env.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID || 'coop-assist-mobile';
-
-  const redirectUri = makeRedirectUri({
-    scheme: 'com.onersofties.coopassistmobile',
-    path: 'oauth'
-  });
+  const redirectUri = makeAppRedirectUri();
 
   // Restore OAuth session state on mount (in case app was killed during 2FA)
   useEffect(() => {
     const restoreAuthSession = async () => {
       try {
-        const [storedState, storedVerifier] = await Promise.all([
-          SecureStore.getItemAsync('oauth_state'),
-          SecureStore.getItemAsync('code_verifier'),
-        ]);
+        const { state: storedState, codeVerifier: storedVerifier } = await restoreOAuthSession();
         if (storedState) oauthStateRef.current = storedState;
         if (storedVerifier) codeVerifierRef.current = storedVerifier;
       } catch (err) {
-        console.error('Error restoring auth session:', err);
+        
       }
     };
     restoreAuthSession();
@@ -107,47 +105,9 @@ const LoginScreen = () => {
     checkBiometrics();
   }, []);
 
-  // Helper function to generate a random string for PKCE (43-128 chars)
-  // Using only alphanumeric characters to avoid any potential encoding issues with -._~
-  const generateRandomString = (length: number) => {
-    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    return result;
-  };
-
-  // Helper function to generate PKCE code verifier and challenge
-  const generatePKCE = async () => {
-    // Generate a code verifier (spec recommends 43-128 chars)
-    const codeVerifier = generateRandomString(64);
-
-    // Generate SHA256 hash of code verifier and encode as base64url
-    const hash = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      codeVerifier,
-      { encoding: 'base64' as any }
-    );
-
-    // Convert base64 to base64url (RFC 7636)
-    const codeChallenge = hash
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '');
-
-    return { codeVerifier, codeChallenge };
-  };
-
-  // Helper function to generate random state parameter
-  const generateState = () => {
-    return generateRandomString(32);
-  }
-
   // Set up deep link listener for OAuth callback
   useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
-      console.log('Deep link received:', url);
 
       const parsed = Linking.parse(url);
       const code = parsed.queryParams?.code as string;
@@ -156,7 +116,6 @@ const LoginScreen = () => {
       // Ensure we have a code and the state matches what we sent
       if (code && state && state === oauthStateRef.current) {
         if (isProcessingCallbackRef.current) {
-          console.log('Already processing a callback, ignoring duplicate');
           return;
         }
         console.log('OAuth code received via deep link');
@@ -205,10 +164,7 @@ const LoginScreen = () => {
     codeVerifierRef.current = null;
     oauthStateRef.current = null;
     isProcessingCallbackRef.current = false;
-    await Promise.all([
-      SecureStore.deleteItemAsync('oauth_state'),
-      SecureStore.deleteItemAsync('code_verifier'),
-    ]);
+    await clearOAuthSession();
   };
 
   const checkBiometrics = async () => {
@@ -226,8 +182,8 @@ const LoginScreen = () => {
     if (isSupported && isEnabled) {
       setLoading(true);
       try {
-        const canRefresh = await trySilentRefresh();
-        setCanUseBiometrics(canRefresh);
+        const refreshOutcome = await trySilentRefresh();
+        setCanUseBiometrics(refreshOutcome === 'ok');
       } catch (err) {
         console.error('Error checking silent refresh for biometric display:', err);
         setCanUseBiometrics(false);
@@ -245,40 +201,15 @@ const LoginScreen = () => {
 
     try {
       // Ensure we have the code verifier
-      let verifier = codeVerifierRef.current;
-      if (!verifier) {
-        console.log('Code verifier missing from ref, trying SecureStore...');
-        verifier = await SecureStore.getItemAsync('code_verifier');
-      }
+      const restored = await restoreOAuthSession();
+      const verifier = codeVerifierRef.current ?? restored.codeVerifier;
 
       if (!verifier) {
-        throw new Error('Code verifier not found. Session may have expired.');
+        throw new Error('Code verifier not found. Session may have expired. Please try signing in again.');
       }
-
-      const discovery = {
-        authorizationEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`,
-        tokenEndpoint: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/token`,
-      };
 
       console.log('Exchanging code for tokens...');
-      // Exchange code for tokens
-      const tokenResponse = await exchangeCodeAsync(
-        {
-          clientId: keycloakClientId,
-          code: code,
-          redirectUri: redirectUri,
-          extraParams: {
-            code_verifier: verifier,
-          }
-        },
-        discovery as any
-      );
-
-      // Store tokens
-      await SecureStore.setItemAsync('access_token', tokenResponse.accessToken);
-      if (tokenResponse.refreshToken) {
-        await SecureStore.setItemAsync('refresh_token', tokenResponse.refreshToken);
-      }
+      await exchangeCodeForTokens({ code, codeVerifier: verifier, redirectUri });
 
       console.log('Token exchange successful');
 
@@ -294,7 +225,11 @@ const LoginScreen = () => {
       setLoading(false);
       WebBrowser.dismissBrowser();
 
-      showToast('Failed to complete authentication. PKCE verification or network error. Please try again.', 'error');
+      if (error instanceof AuthError) {
+        showToast(error.message, error.severity);
+      } else {
+        showToast('Failed to complete authentication. PKCE verification or network error. Please try again.', 'error');
+      }
     }
   };
 
@@ -352,28 +287,13 @@ const LoginScreen = () => {
       codeVerifierRef.current = codeVerifier;
 
       // Generate state parameter
-      const state = generateState();
+      const state = await generateState();
       oauthStateRef.current = state;
 
+      const oauthUrl = buildAuthorizationUrl({ state, codeChallenge, redirectUri });
+
       // Persist state and verifier for app-switching robustness
-      await Promise.all([
-        SecureStore.setItemAsync('oauth_state', state),
-        SecureStore.setItemAsync('code_verifier', codeVerifier),
-      ]);
-
-      // Build OAuth authorization URL
-      const authUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth`;
-      const params = new URLSearchParams({
-        client_id: keycloakClientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'openid profile offline_access',
-        state: state,
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256',
-      });
-
-      const oauthUrl = `${authUrl}?${params.toString()}`;
+      await saveOAuthSession({ state, codeVerifier, authUrl: oauthUrl });
       console.log('Opening OAuth URL:', oauthUrl);
 
       let result;
@@ -425,6 +345,11 @@ const LoginScreen = () => {
   const navigateAfterAuth = async () => {
     setBiometricSessionVerified(true);
     void registerDeviceTokenWithBackend();
+    // First login ever: force App PIN setup before entering the app.
+    if (!(await hasAppPin())) {
+      router.replace('/setup-pin');
+      return;
+    }
     const pending = await consumePendingNotificationRoute();
     if (pending) {
       router.replace(pending);
@@ -439,8 +364,12 @@ const LoginScreen = () => {
       // modal, so a dead session goes straight to credential login instead
       // of failing after a successful biometric challenge.
       setLoading(true);
-      const hasSession = await trySilentRefresh();
-      if (!hasSession) {
+      const sessionStatus = await trySilentRefresh();
+      if (sessionStatus === 'offline') {
+        showToast('You appear to be offline. Please check your connection and try again.', 'warning');
+        return;
+      }
+      if (sessionStatus !== 'ok') {
         setCanUseBiometrics(false);
         showToast('Your session has expired. Please log in with your credentials.', 'info');
         return;
@@ -460,7 +389,10 @@ const LoginScreen = () => {
           if (tokenResult.success) {
             await navigateAfterAuth();
           } else {
-            showToast(tokenResult.error || 'Your session has expired. Please log in with your credentials.', 'info');
+            showToast(
+              tokenResult.error || 'Your session has expired. Please log in with your credentials.',
+              tokenResult.offline ? 'warning' : 'info',
+            );
           }
         } catch (authError) {
           console.error('Silent refresh failed during biometric login:', authError);

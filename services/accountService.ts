@@ -51,6 +51,9 @@ export interface MemberDto {
   shares?: number | null;
   loanBalance?: number | null;
   totalSavings?: number | null;
+  profilePictureUrl?: string | null;
+  dateOfBirth?: string | null;
+  nextOfKin?: string | null;
 }
 
 export interface PaginatedMembersResponse {
@@ -319,10 +322,72 @@ export const AccountService = {
     };
   },
 
+  async createMember(payload: {
+    userName: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phoneNumber: string;
+    address: string;
+    gender: string;
+    dateOfBirth: string;
+    occupation: string;
+    nationalId?: string;
+    bvn?: string;
+    accountNumber?: string;
+    bankName?: string;
+    memberId?: string;
+    status: string;
+    membershipType: string;
+    role: string[];
+    nextOfKinName: string;
+    nextOfKinPhone: string;
+    nextOfKinEmail?: string;
+    nextOfKinAddress?: string;
+    profilePicture?: {
+      name: string;
+      contentType: string;
+      fileUrl: string;
+    };
+  }): Promise<string> {
+    const response = await apiClient.post('/users', {
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to create member');
+    return response.text();
+  },
+
   async getMember(id: string): Promise<MemberDto> {
     const response = await apiClient.get(`/users/${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error('Unable to load member details');
     return response.json() as Promise<MemberDto>;
+  },
+
+  async updateMember(id: string, payload: {
+    membershipId: string;
+    firstName: string;
+    lastName: string;
+    emailAddress: string;
+    phoneNumber: string;
+    address: string;
+    dateOfBirth: string;
+    nextOfKin: string;
+    membershipType: string;
+    gender: string;
+    role: string;
+    occupation: string;
+    resendEmail?: boolean;
+    profilePicture?: {
+      name: string;
+      contentType: string;
+      fileUrl: string;
+    } | null;
+  }): Promise<void> {
+    const response = await apiClient.patch(`/users/${encodeURIComponent(id)}`, {
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to update member');
   },
 
   async getMemberAccounts(id: string): Promise<MemberAccountBalanceDto[]> {

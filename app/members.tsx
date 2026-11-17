@@ -19,6 +19,10 @@ import {
   type MemberDto,
   type PaginatedMembersResponse,
 } from '@/services/accountService';
+import { getCurrentUserRoles } from '@/services/authService';
+
+// Mirror the backend CreateMember endpoint: only Admin and Secretary may add members.
+const MEMBER_CREATOR_ROLES = ['Admin', 'Secretary'];
 
 function memberDisplayName(member: MemberDto): string {
   const full = [member.firstName, member.lastName].filter(Boolean).join(' ').trim();
@@ -39,6 +43,13 @@ const MembersScreen = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [canAddMember, setCanAddMember] = useState(false);
+
+  useEffect(() => {
+    void getCurrentUserRoles()
+      .then((roles) => setCanAddMember(roles.some((role) => MEMBER_CREATOR_ROLES.includes(role))))
+      .catch(() => setCanAddMember(false));
+  }, []);
 
   // Theme colors
   const bg = isDark ? '#121212' : '#F8F9FB';
@@ -113,22 +124,34 @@ const MembersScreen = () => {
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: 'Members',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerTintColor: textPrimary,
-          headerStyle: { backgroundColor: bg },
-          headerShadowVisible: false,
+          headerShown: false,
         }}
       />
 
       <View style={styles.header}>
-        <View>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={[styles.backButton, { borderColor: inputBorder, backgroundColor: cardBg }]}
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={20} color={textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: textPrimary }]}>Members</Text>
           <Text style={[styles.subtitle, { color: textSecondary }]}>
             Organization member directory
           </Text>
         </View>
+        {canAddMember ? (
+          <TouchableOpacity
+            style={[styles.addButton, { backgroundColor: primary }]}
+            onPress={() => router.push('/add-member')}
+            accessibilityLabel="Add new member"
+          >
+            <Ionicons name="add" size={18} color="#FFFFFF" />
+            <Text style={styles.addButtonText}>Add</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ScrollView
@@ -279,9 +302,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
+    gap: 12,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 24,
@@ -290,6 +324,19 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 12,
     marginTop: 2,
+  },
+  addButton: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    gap: 4,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   scrollContent: {
     padding: 16,

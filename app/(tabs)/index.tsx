@@ -5,7 +5,6 @@ import { jwtDecode } from 'jwt-decode';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  AppState,
   Dimensions,
   RefreshControl,
   ScrollView,
@@ -19,16 +18,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { AccountService, type AccountDto, type AccountSummaryDto, type ActivityDto } from '@/services/accountService';
 import {
-  clearAppBackgrounded,
   getCurrentUserId,
   getCurrentUserRoles,
   getStoredTokens,
-  isBiometricSessionVerified,
-  isWithinAppLockGrace,
-  markAppBackgrounded,
   PRIVILEGED_MEMBER_ROLES,
-  setBiometricSessionVerified,
-  trySilentRefresh
 } from '@/services/authService';
 import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
 
@@ -79,23 +72,10 @@ const DashboardScreen = () => {
           return;
         }
 
-        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
-        if (biometricsEnabled === 'true' && !isBiometricSessionVerified()) {
-          // Quick return (e.g. opened from a notification tap after the OS
-          // recycled the app) stays inside the grace period: resume silently
-          // when the token session is still alive instead of fingerprinting.
-          if ((await isWithinAppLockGrace()) && (await trySilentRefresh())) {
-            setBiometricSessionVerified(true);
-            await clearAppBackgrounded();
-          } else {
-            router.replace('/login');
-            return;
-          }
-        }
-
         const token = accessToken || (await SecureStore.getItemAsync('access_token'));
         if (token) {
           const decoded = jwtDecode<any>(token);
+          console.log('Decoded JWT:', decoded);
           const name = decoded.name || decoded.preferred_username || decoded.given_name || 'Member';
           setUserName(name);
           void registerDeviceTokenWithBackend();
@@ -106,47 +86,6 @@ const DashboardScreen = () => {
     };
 
     void verifyDashboardAccess();
-
-    const subscription = AppState.addEventListener('change', async (nextState) => {
-      if (nextState === 'background') {
-        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
-        if (biometricsEnabled === 'true') {
-          // Don't lock immediately: short trips away from the app (e.g.
-          // tapping a notification, fetching a 2FA code from the
-          // authenticator app) stay unlocked for the grace period.
-          await markAppBackgrounded();
-        }
-      } else if (nextState === 'active') {
-        const biometricsEnabled = await SecureStore.getItemAsync('biometrics_enabled');
-        if (biometricsEnabled !== 'true') {
-          await clearAppBackgrounded();
-          return;
-        }
-        // Back within the 2-minute grace period (notification tap, quick
-        // switch — even across an OS process restart): resume without a
-        // fingerprint challenge while the token session is still alive, and
-        // land on the screen the notification opened instead of login.
-        if (await isWithinAppLockGrace()) {
-          if (!isBiometricSessionVerified() && !(await trySilentRefresh())) {
-            router.replace('/login');
-            return;
-          }
-          setBiometricSessionVerified(true);
-          await clearAppBackgrounded();
-          return;
-        }
-        if (!isBiometricSessionVerified()) {
-          router.replace('/login');
-          return;
-        }
-        // Away longer than the grace period: re-lock.
-        setBiometricSessionVerified(false);
-        await clearAppBackgrounded();
-        router.replace('/login');
-      }
-    });
-
-    return () => subscription.remove();
   }, [router]);
 
   const loadDashboardData = useCallback(async () => {

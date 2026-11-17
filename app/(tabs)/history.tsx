@@ -19,7 +19,7 @@ import {
   TransactionService,
   type MemberSearchResult,
 } from '@/services/transaction-service';
-import { getValidAccessToken, logout } from '@/services/authService';
+import { AuthError, getValidAccessToken, logout } from '@/services/authService';
 import { jwtDecode } from 'jwt-decode';
 import { Toast } from '@/components/ui/Toast';
 import { ToastProvider, useToast } from '@/context/ToastContext';
@@ -135,20 +135,21 @@ const TransactionHistoryScreen = () => {
     const checkPermissions = async () => {
       try {
         const token = await getValidAccessToken();
-        if (token == null) {
-          toast.showToast('Login session failed', 'warning');
-          logout();
-        } else {
 
-          const claims = jwtDecode<AccessTokenClaims>(token);
-          const roles = [
-            ...(claims.realm_access?.roles ?? []),
-            ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
-          ];
-          setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
-          setCanSearchMemberTransactions(roles.some((role) => ['Admin', 'Accountant'].includes(role)));
+        const claims = jwtDecode<AccessTokenClaims>(token);
+        const roles = [
+          ...(claims.realm_access?.roles ?? []),
+          ...Object.values(claims.resource_access ?? {}).flatMap((client) => client.roles ?? []),
+        ];
+        setCanViewOrganizationTransactions(roles.some((role) => ['Admin', 'Accountant', 'Secretary'].includes(role)));
+        setCanSearchMemberTransactions(roles.some((role) => ['Admin', 'Accountant'].includes(role)));
+      } catch (error) {
+        if (error instanceof AuthError && error.kind === 'network') {
+          toast.showToast(error.message, 'warning');
+        } else {
+          toast.showToast('Login session failed. Please sign in again.', 'error');
+          void logout();
         }
-      } catch {
         setCanViewOrganizationTransactions(false);
         setCanSearchMemberTransactions(false);
       }

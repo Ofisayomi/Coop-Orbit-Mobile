@@ -22,46 +22,6 @@ import {
 } from '@/services/accountService';
 
 const DUMMY_REQUESTS: LoanGuarantorRequestDto[] = [
-  {
-    id: '1',
-    applicantName: 'Aisha Bello',
-    createdDate: '2026-10-26T10:00:00Z',
-    loanAmount: 50000,
-    loanName: 'Personal Loan',
-    comment: 'Need financial support to restock retail inventory before month end.',
-    status: 'Pending',
-    memberId: 'MEM-042',
-  },
-  {
-    id: '2',
-    applicantName: 'Chukwudi Okoro',
-    createdDate: '2026-10-25T14:30:00Z',
-    loanAmount: 100000,
-    loanName: 'Business Loan',
-    comment: 'Expansion of pharmacy premises and procurement of storage equipment.',
-    status: 'Approved',
-    memberId: 'MEM-019',
-  },
-  {
-    id: '3',
-    applicantName: 'Fatima Hassan',
-    createdDate: '2026-10-24T09:15:00Z',
-    loanAmount: 75000,
-    loanName: 'Education Loan',
-    comment: 'Tuition fees for post-graduate studies at University of Ibadan.',
-    status: 'Pending',
-    memberId: 'MEM-033',
-  },
-  {
-    id: '4',
-    applicantName: 'Emeka Nwosu',
-    createdDate: '2026-10-23T16:20:00Z',
-    loanAmount: 200000,
-    loanName: 'Housing Loan',
-    comment: 'Roof renovation and structural repairs on family property.',
-    status: 'Rejected',
-    memberId: 'MEM-008',
-  },
 ];
 
 export default function GuarantorRequestsScreen() {
@@ -100,7 +60,6 @@ export default function GuarantorRequestsScreen() {
       setPaginationData(data);
       setRequests(data.items || []);
     } catch (err) {
-      console.warn('Failed to fetch guarantor requests from API, using fallback data:', err);
       // Fallback to dummy data only if we don't have any requests yet
       setRequests((prev) => (prev.length > 0 ? prev : DUMMY_REQUESTS));
       setPaginationData((prev) => prev ?? {
