@@ -37,6 +37,9 @@ function RootLayoutNav() {
         <Stack.Screen name="payment-request-details" options={{ headerShown: false }} />
         <Stack.Screen name="members" options={{ headerShown: false }} />
         <Stack.Screen name="member-details" options={{ headerShown: false }} />
+        <Stack.Screen name="support-tickets" options={{ headerShown: false }} />
+        <Stack.Screen name="create-ticket" options={{ headerShown: false }} />
+        <Stack.Screen name="ticket-detail" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />

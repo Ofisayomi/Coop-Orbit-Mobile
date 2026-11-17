@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -45,6 +45,7 @@ interface AccessTokenClaims {
 }
 
 const TransactionHistoryScreen = () => {
+  const router = useRouter();
   const { accountId, accountName } = useLocalSearchParams<{ accountId?: string; accountName?: string }>();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -694,6 +695,23 @@ const TransactionHistoryScreen = () => {
                 </View>
 
                 <TouchableOpacity
+                  style={[styles.modalReportButton, { borderColor: '#F59E0B' }]}
+                  onPress={() => {
+                    const reference = selectedTransaction.transactionId || selectedTransaction.id;
+                    setSelectedTransaction(null);
+                    router.push({
+                      pathname: '/create-ticket',
+                      params: {
+                        subject: `Issue with Transaction #${reference}`,
+                      },
+                    });
+                  }}
+                >
+                  <Ionicons name="headset-outline" size={16} color="#F59E0B" />
+                  <Text style={styles.modalReportButtonText}>Report an Issue</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   style={[styles.modalDoneButton, { backgroundColor: primary }]}
                   onPress={() => setSelectedTransaction(null)}
                 >
@@ -1033,6 +1051,21 @@ const styles = StyleSheet.create({
   modalDoneButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
+    fontWeight: '600',
+  },
+  modalReportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    gap: 6,
+    marginBottom: 12,
+  },
+  modalReportButtonText: {
+    color: '#F59E0B',
+    fontSize: 13,
     fontWeight: '600',
   },
   loadingContainer: {

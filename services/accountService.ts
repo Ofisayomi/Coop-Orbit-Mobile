@@ -195,20 +195,22 @@ export interface OrganizationDto {
 }
 
 export const AccountService = {
-  async getAccounts(): Promise<AccountDto[]> {
-    return readJson<AccountDto[]>(await apiClient.get('/accounts'));
+  async getAccounts(memberId?: string): Promise<AccountDto[]> {
+    const query = memberId ? `?memberId=${encodeURIComponent(memberId)}` : '';
+    return readJson<AccountDto[]>(await apiClient.get(`/accounts${query}`));
   },
 
-  async getPaymentAccounts(): Promise<AccountDto[]> {
+  async getPaymentAccounts(memberId?: string): Promise<AccountDto[]> {
+    const query = memberId ? `?memberId=${encodeURIComponent(memberId)}` : '';
     try {
-      const response = await apiClient.get('/accounts/payment');
+      const response = await apiClient.get(`/accounts/payment${query}`);
       if (response.ok) {
         return readJson<AccountDto[]>(response);
       }
     } catch {
       // Fallback to getAccounts
     }
-    return this.getAccounts();
+    return this.getAccounts(memberId);
   },
 
   async searchMembers(query: string): Promise<UserSearchDto[]> {

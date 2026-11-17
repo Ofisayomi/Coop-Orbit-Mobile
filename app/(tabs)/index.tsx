@@ -375,7 +375,7 @@ const DashboardScreen = () => {
             { name: 'Members', icon: 'id-card-outline', lightBg: iconBgLight, route: '/members' },
             { name: 'Guarantor Requests', icon: 'people-outline', lightBg: iconBgMid, route: '/guarantor-requests' },
             { name: 'Reports', icon: 'bar-chart-outline', lightBg: iconBgLight, route: '/(tabs)/reports' },
-            { name: 'Support', icon: 'headset-outline', lightBg: iconBgLight },
+            { name: 'Help & Support', icon: 'headset-outline', lightBg: iconBgLight, route: '/support-tickets' },
           ].map((action, index) => (
             <TouchableOpacity
               key={index}

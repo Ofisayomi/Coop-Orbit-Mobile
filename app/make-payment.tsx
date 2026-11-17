@@ -110,17 +110,20 @@ export default function SplitPaymentScreen() {
     void checkRolesAndUser();
   }, []);
 
-  // 2. Load Payment Accounts
-  const loadAccounts = useCallback(async () => {
+  // 2. Load Payment Accounts — scoped to the selected member when an
+  // admin/secretary pays on behalf of someone else, otherwise the caller.
+  const loadAccounts = useCallback(async (memberId?: string | null) => {
     setIsLoadingAccounts(true);
     try {
-      const fetchedAccounts = await AccountService.getPaymentAccounts();
+      const fetchedAccounts = await AccountService.getPaymentAccounts(memberId ?? undefined);
       const active = fetchedAccounts.filter((acc) => acc.isActive !== false);
       if (active.length > 0) {
         setAccounts(active);
       } else {
         setAccounts(DEFAULT_ACCOUNTS as any);
       }
+      // Balances belong to a different person — drop stale allocations.
+      setAllocations({});
     } catch {
       setAccounts(DEFAULT_ACCOUNTS as any);
     } finally {
@@ -154,6 +157,20 @@ export default function SplitPaymentScreen() {
     setSelectedMember(member);
     setMemberSearchQuery('');
     setSearchResults([]);
+    void loadAccounts(member.id);
+  };
+
+  const handleClearMember = () => {
+    setSelectedMember(null);
+    void loadAccounts();
+  };
+
+  const handlePaymentTargetChange = (target: 'myself' | 'member') => {
+    setPaymentTarget(target);
+    if (target === 'myself') {
+      setSelectedMember(null);
+      void loadAccounts();
+    }
   };
 
   const handleDocumentPick = async () => {
@@ -288,10 +305,7 @@ export default function SplitPaymentScreen() {
                       { borderColor: paymentTarget === 'myself' ? '#10B981' : borderColor },
                       paymentTarget === 'myself' && { backgroundColor: isDark ? '#064E3B20' : '#ECFDF5' },
                     ]}
-                    onPress={() => {
-                      setPaymentTarget('myself');
-                      setSelectedMember(null);
-                    }}
+                    onPress={() => handlePaymentTargetChange('myself')}
                   >
                     <View style={[styles.radio, paymentTarget === 'myself' && styles.radioActive]} />
                     <View style={{ flex: 1 }}>
@@ -308,7 +322,7 @@ export default function SplitPaymentScreen() {
                       { borderColor: paymentTarget === 'member' ? '#10B981' : borderColor },
                       paymentTarget === 'member' && { backgroundColor: isDark ? '#064E3B20' : '#ECFDF5' },
                     ]}
-                    onPress={() => setPaymentTarget('member')}
+                    onPress={() => handlePaymentTargetChange('member')}
                   >
                     <View style={[styles.radio, paymentTarget === 'member' && styles.radioActive]} />
                     <View style={{ flex: 1 }}>
@@ -335,7 +349,7 @@ export default function SplitPaymentScreen() {
                             </Text>
                           ) : null}
                         </View>
-                        <TouchableOpacity onPress={() => setSelectedMember(null)} style={{ padding: 4 }}>
+                        <TouchableOpacity onPress={handleClearMember} style={{ padding: 4 }}>
                           <Ionicons name="close-circle" size={20} color="#EF4444" />
                         </TouchableOpacity>
                       </View>

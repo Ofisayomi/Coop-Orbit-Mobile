@@ -808,6 +808,29 @@ export default function LoanDetailsScreen() {
             ))}
           </View>
         </View>
+
+        {/* Contextual support entry */}
+        <TouchableOpacity
+          style={[styles.reportButton, { backgroundColor: cardBg, borderColor }]}
+          onPress={() =>
+            router.push({
+              pathname: '/create-ticket',
+              params: {
+                category: 'LoanIssue',
+                subject: `Issue with Loan ${currentLoanName} (#${loanId.slice(0, 8)})`,
+              },
+            })
+          }
+        >
+          <Ionicons name="headset-outline" size={20} color={primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.reportTitle, { color: textPrimary }]}>Report an Issue</Text>
+            <Text style={[styles.reportSubtitle, { color: textSecondary }]}>
+              Get help with this loan from support
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={textSecondary} />
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1045,6 +1068,22 @@ const styles = StyleSheet.create({
   backLinkText: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+  },
+  reportTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  reportSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   inlineError: {
     borderRadius: 10,

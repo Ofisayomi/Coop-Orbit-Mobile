@@ -17,6 +17,7 @@ export const NotificationType = {
     LOAN_ACTED: 'loan_acted',
     LOAN_STATUS: 'loan_status',
     PAYMENT_REQUEST: 'payment_request',
+    SUPPORT_TICKET: 'support_ticket',
 } as const;
 
 export type NotificationPayload = Record<string, unknown>;
@@ -40,7 +41,9 @@ export type NotificationRoute =
     | { pathname: '/loan-details'; params: { id: string } }
     | { pathname: '/loans'; params?: undefined }
     | { pathname: '/guarantor-requests'; params?: undefined }
-    | { pathname: '/payment-requests'; params?: undefined };
+    | { pathname: '/payment-requests'; params?: undefined }
+    | { pathname: '/support-tickets'; params?: undefined }
+    | { pathname: '/ticket-detail'; params: { id: string } };
 
 const PENDING_NOTIFICATION_ROUTE_KEY = 'pending_notification_route';
 // A tap that is never followed by a login (e.g. user dismisses it) must not
@@ -72,6 +75,11 @@ export function resolveNotificationRoute(data: NotificationPayload): Notificatio
 
         case NotificationType.PAYMENT_REQUEST:
             return { pathname: '/payment-requests' };
+
+        case NotificationType.SUPPORT_TICKET: {
+            const ticketId = data.ticketId as string | undefined;
+            return ticketId ? { pathname: '/ticket-detail', params: { id: ticketId } } : { pathname: '/support-tickets' };
+        }
 
         default:
             console.log('[Notification] Unhandled notification type:', type);
@@ -121,6 +129,13 @@ export async function consumePendingNotificationRoute(): Promise<NotificationRou
                 return { pathname: '/guarantor-requests' };
             case '/payment-requests':
                 return { pathname: '/payment-requests' };
+            case '/support-tickets':
+                return { pathname: '/support-tickets' };
+            case '/ticket-detail': {
+                const params = parsed.params as { id?: unknown } | undefined;
+                if (typeof params?.id !== 'string' || !params.id) return null;
+                return { pathname: '/ticket-detail', params: { id: params.id } };
+            }
             default:
                 return null;
         }

@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { logout } from '@/services/authService';
+import { getCurrentUserRoles, logout, PRIVILEGED_MEMBER_ROLES } from '@/services/authService';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -29,10 +29,14 @@ export default function SettingsScreen() {
     const [isBiometricSupported, setIsBiometricSupported] = useState(false);
     const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
     const [isTwoFactorEnabled, setIsTwoFactorEnabled] = useState(false);
+    const [isSupportAdmin, setIsSupportAdmin] = useState(false);
 
     useEffect(() => {
         checkBiometricSupport();
         loadSettings();
+        void getCurrentUserRoles()
+            .then((roles) => setIsSupportAdmin(roles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role))))
+            .catch(() => setIsSupportAdmin(false));
     }, []);
 
     const checkBiometricSupport = async () => {
@@ -258,6 +262,39 @@ export default function SettingsScreen() {
                     </TouchableOpacity>
                 </View>
 
+                {/* Support Section */}
+                <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Support</Text>
+                <View style={[styles.card, { backgroundColor: getCardColor() }]}>
+                    <TouchableOpacity
+                        style={styles.settingRow}
+                        onPress={() => router.push('/support-tickets')}
+                    >
+                        <View style={styles.settingInfo}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
+                                <Ionicons name="headset-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
+                            </View>
+                            <View style={styles.textContainer}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    <Text style={[styles.settingTitle, { color: getTextColor() }]}>
+                                        {isSupportAdmin ? 'Member Support' : 'Help & Support'}
+                                    </Text>
+                                    {isSupportAdmin && (
+                                        <View style={[styles.adminBadge, { backgroundColor: isDark ? '#1E3A8A' : '#DBEAFE' }]}>
+                                            <Text style={[styles.adminBadgeText, { color: isDark ? '#BFDBFE' : '#173581' }]}>ADMIN</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                    {isSupportAdmin
+                                        ? 'Respond to member support tickets'
+                                        : 'Get help with loans, savings and your account'}
+                                </Text>
+                            </View>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color={getSubTextColor()} />
+                    </TouchableOpacity>
+                </View>
+
                 {/* Account Section */}
                 <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Account</Text>
                 <View style={[styles.card, { backgroundColor: getCardColor() }]}>
@@ -351,6 +388,15 @@ const styles = StyleSheet.create({
     },
     settingDescription: {
         fontSize: 13,
+    },
+    adminBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    adminBadgeText: {
+        fontSize: 10,
+        fontWeight: '800',
     },
     themeSelectorContainer: {
         flexDirection: 'row',
