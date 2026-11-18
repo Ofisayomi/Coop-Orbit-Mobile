@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
-import { getStoredTokens } from './authService';
+import { getStoredTokens, getValidAccessToken } from './authService';
 import { getOrCreateDeviceId } from './device';
 import { apiClient } from './http-client';
 
@@ -238,11 +238,15 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
 /**
  * Register device push token with the backend API for the currently authenticated user.
+ * Runs after the first successful login (and as a safety net on dashboard mount):
+ * the session is proven via the refresh flow, not the SecureStore access token,
+ * which is intentionally never persisted there.
  */
 export async function registerDeviceTokenWithBackend(): Promise<boolean> {
     try {
-        const { accessToken } = await getStoredTokens();
-        if (!accessToken) {
+        try {
+            await getValidAccessToken();
+        } catch {
             console.log('[Push] User not logged in, skipping device registration.');
             return false;
         }
@@ -272,6 +276,68 @@ export async function registerDeviceTokenWithBackend(): Promise<boolean> {
         return true;
     } catch (error) {
         console.error('[Push] Error registering device push token:', error);
+        return false;
+    }
+}
+
+export interface DeviceNotificationStatus {
+    registered: boolean;
+    isEnabled: boolean;
+}
+
+/**
+ * Read this device's server-side notification status. Returns null when the
+ * session is dead or the backend is unreachable (caller keeps its last state).
+ */
+export async function getDeviceNotificationStatus(): Promise<DeviceNotificationStatus | null> {
+    try {
+        const deviceId = await getOrCreateDeviceId();
+        const response = await apiClient.get(`/api/devices/status?deviceId=${encodeURIComponent(deviceId)}`);
+        if (!response.ok) {
+            console.warn('[Push] Failed to load device notification status:', response.status);
+            return null;
+        }
+        const json = (await response.json()) as { registered?: boolean; isEnabled?: boolean };
+        return { registered: json.registered === true, isEnabled: json.isEnabled === true };
+    } catch (error) {
+        console.error('[Push] Error loading device notification status:', error);
+        return null;
+    }
+}
+
+/**
+ * Explicit user opt-in/opt-out from Settings. Enabling (re)registers the Expo
+ * push token; disabling keeps the server row so one tap re-enables later.
+ */
+export async function setDeviceNotificationsEnabled(enabled: boolean): Promise<boolean> {
+    try {
+        const deviceId = await getOrCreateDeviceId();
+
+        let pushToken: string | null = null;
+        if (enabled) {
+            pushToken = await registerForPushNotificationsAsync();
+            if (!pushToken) {
+                console.warn('[Push] Cannot enable notifications without a push token.');
+                return false;
+            }
+        }
+
+        const response = await apiClient.put('/api/devices/preference', {
+            body: JSON.stringify({
+                deviceId,
+                pushToken: pushToken ?? undefined,
+                isEnabled: enabled,
+            }),
+        });
+
+        if (!response.ok) {
+            console.warn('[Push] Failed to update notification preference:', response.status);
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[Push] Error updating notification preference:', error);
         return false;
     }
 }

@@ -18,6 +18,7 @@ import { useAppTheme } from '@/context/ThemeContext';
 import { useToast } from '@/context/ToastContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getCurrentUserRoles, logout, PRIVILEGED_MEMBER_ROLES } from '@/services/authService';
+import { getDeviceNotificationStatus, setDeviceNotificationsEnabled } from '@/services/expo-notification';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -29,11 +30,14 @@ export default function SettingsScreen() {
     const [isBiometricSupported, setIsBiometricSupported] = useState(false);
     const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
     const [isTwoFactorEnabled, setIsTwoFactorEnabled] = useState(false);
+    const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(false);
+    const [isNotificationsLoading, setIsNotificationsLoading] = useState(true);
     const [isSupportAdmin, setIsSupportAdmin] = useState(false);
 
     useEffect(() => {
         checkBiometricSupport();
         loadSettings();
+        void loadNotificationStatus();
         void getCurrentUserRoles()
             .then((roles) => setIsSupportAdmin(roles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role))))
             .catch(() => setIsSupportAdmin(false));
@@ -83,6 +87,38 @@ export default function SettingsScreen() {
             // Disabling
             setIsBiometricEnabled(false);
             await SecureStore.setItemAsync('biometrics_enabled', 'false');
+        }
+    };
+
+    const loadNotificationStatus = async () => {
+        setIsNotificationsLoading(true);
+        try {
+            const status = await getDeviceNotificationStatus();
+            if (status) {
+                setIsNotificationsEnabled(status.isEnabled);
+            }
+        } finally {
+            setIsNotificationsLoading(false);
+        }
+    };
+
+    const toggleNotifications = async (value: boolean) => {
+        const previous = isNotificationsEnabled;
+        setIsNotificationsEnabled(value);
+        const ok = await setDeviceNotificationsEnabled(value);
+        if (!ok) {
+            setIsNotificationsEnabled(previous);
+            showToast(
+                value
+                    ? 'Could not turn on notifications. Check permission and connection, then try again.'
+                    : 'Could not turn off notifications. Check your connection and try again.',
+                'error'
+            );
+        } else {
+            showToast(
+                value ? 'Push notifications turned on.' : 'Push notifications turned off.',
+                'success'
+            );
         }
     };
 
@@ -249,17 +285,31 @@ export default function SettingsScreen() {
                 {/* Other Settings (Placeholder for future) */}
                 <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Preferences</Text>
                 <View style={[styles.card, { backgroundColor: getCardColor() }]}>
-                    <TouchableOpacity style={styles.settingRow}>
+                    <View style={styles.settingRow}>
                         <View style={styles.settingInfo}>
                             <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
                                 <Ionicons name="notifications-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
                             </View>
                             <View style={styles.textContainer}>
                                 <Text style={[styles.settingTitle, { color: getTextColor() }]}>Notifications</Text>
+                                <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                    {isNotificationsLoading
+                                        ? 'Checking status...'
+                                        : isNotificationsEnabled
+                                            ? 'Push alerts are on for this device'
+                                            : 'Push alerts are off for this device'}
+                                </Text>
                             </View>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color={getSubTextColor()} />
-                    </TouchableOpacity>
+                        <Switch
+                            trackColor={{ false: '#CBD5E0', true: '#90CDF4' }}
+                            thumbColor={isNotificationsEnabled ? '#173581' : '#F7FAFC'}
+                            ios_backgroundColor="#CBD5E0"
+                            onValueChange={(value) => void toggleNotifications(value)}
+                            value={isNotificationsEnabled}
+                            disabled={isNotificationsLoading}
+                        />
+                    </View>
                 </View>
 
                 {/* Support Section */}
