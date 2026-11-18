@@ -21,6 +21,7 @@ import {
   getCurrentUserId,
   getCurrentUserRoles,
   getStoredTokens,
+  getValidAccessToken,
   PRIVILEGED_MEMBER_ROLES,
 } from '@/services/authService';
 import { registerDeviceTokenWithBackend } from '@/services/expo-notification';
@@ -72,7 +73,7 @@ const DashboardScreen = () => {
           return;
         }
 
-        const token = accessToken || (await SecureStore.getItemAsync('access_token'));
+        const token = accessToken || await getValidAccessToken();
         if (token) {
           const decoded = jwtDecode<any>(token);
           console.log('Decoded JWT:', decoded);
@@ -113,15 +114,15 @@ const DashboardScreen = () => {
           const icon = accType.includes('loan')
             ? 'cash-outline'
             : accType.includes('saving')
-            ? 'wallet-outline'
-            : 'trending-up-outline';
+              ? 'wallet-outline'
+              : 'trending-up-outline';
 
           const isOutstanding = balance < 0;
           const badgeText = isOutstanding
             ? 'Outstanding'
             : matched?.isActive === false
-            ? 'Inactive'
-            : 'Active';
+              ? 'Inactive'
+              : 'Active';
 
           return {
             id: matched?.id || `summary-${index}`,
@@ -146,8 +147,8 @@ const DashboardScreen = () => {
           const icon = accType.includes('loan')
             ? 'cash-outline'
             : accType.includes('saving')
-            ? 'wallet-outline'
-            : 'trending-up-outline';
+              ? 'wallet-outline'
+              : 'trending-up-outline';
 
           return {
             id: account.id,
