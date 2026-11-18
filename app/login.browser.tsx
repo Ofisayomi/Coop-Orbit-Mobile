@@ -118,11 +118,11 @@ const LoginScreen = () => {
         if (isProcessingCallbackRef.current) {
           return;
         }
-        console.log('OAuth code received via deep link');
+        
         handleOAuthCallback(code);
       } else if (parsed.queryParams?.error) {
         const error = parsed.queryParams.error as string;
-        console.error('OAuth error:', error);
+        
         setLoading(false);
         cleanupAuthSession();
         showToast(`Authentication failed: ${error}`, 'error');
@@ -144,7 +144,7 @@ const LoginScreen = () => {
       if (loading && authStartTimeRef.current) {
         const elapsedTime = Date.now() - authStartTimeRef.current;
         if (elapsedTime > 10 * 60 * 1000) {
-          console.warn('OAuth timeout: No callback received after 10 minutes');
+          
           setLoading(false);
           cleanupAuthSession();
 
@@ -185,7 +185,7 @@ const LoginScreen = () => {
         const refreshOutcome = await trySilentRefresh();
         setCanUseBiometrics(refreshOutcome === 'ok');
       } catch (err) {
-        console.error('Error checking silent refresh for biometric display:', err);
+        
         setCanUseBiometrics(false);
       } finally {
         setLoading(false);
@@ -208,10 +208,10 @@ const LoginScreen = () => {
         throw new Error('Code verifier not found. Session may have expired. Please try signing in again.');
       }
 
-      console.log('Exchanging code for tokens...');
+      
       await exchangeCodeForTokens({ code, codeVerifier: verifier, redirectUri });
 
-      console.log('Token exchange successful');
+      
 
       // Close browser and cleanup session
       WebBrowser.dismissBrowser();
@@ -220,7 +220,7 @@ const LoginScreen = () => {
       // After first login, prompt user to enable biometrics for future sessions
       await promptEnableBiometricsIfNeeded();
     } catch (error) {
-      console.error('Token exchange failed:', error);
+      
       await cleanupAuthSession();
       setLoading(false);
       WebBrowser.dismissBrowser();
@@ -261,7 +261,7 @@ const LoginScreen = () => {
                     setIsBiometricEnabled(true);
                   }
                 } catch (err) {
-                  console.error('Error enabling biometrics:', err);
+                  
                 } finally {
                   resolve();
                 }
@@ -294,7 +294,7 @@ const LoginScreen = () => {
 
       // Persist state and verifier for app-switching robustness
       await saveOAuthSession({ state, codeVerifier, authUrl: oauthUrl });
-      console.log('Opening OAuth URL:', oauthUrl);
+      
 
       let result;
       if (Platform.OS === 'android') {
@@ -307,8 +307,6 @@ const LoginScreen = () => {
         // On iOS, openAuthSessionAsync is standard and handles automatic return.
         result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
       }
-
-      console.log('Browser session result:', result);
 
       if (result.type === 'success') {
         const url = result.url;
@@ -326,13 +324,11 @@ const LoginScreen = () => {
         // We wait for the Linking listener to catch the redirect.
         setTimeout(() => {
           if (!isProcessingCallbackRef.current) {
-            console.log('Browser closed/dismissed by user');
             setLoading(false);
           }
         }, 3000);
       }
     } catch (error) {
-      console.error('OAuth error:', error);
       await cleanupAuthSession();
       setLoading(false);
 
@@ -381,7 +377,6 @@ const LoginScreen = () => {
         fallbackLabel: 'Use Passcode',
       });
 
-      console.log('Biometric auth result:', result);
       if (result.success) {
         setLoading(true);
         try {

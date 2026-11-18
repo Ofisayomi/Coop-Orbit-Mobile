@@ -781,7 +781,7 @@ export default function LoanDetailsScreen() {
                       <Text style={[styles.statusBadgeText, { color: getStatusColor(tx.status) }]}>{tx.status}</Text>
                     </View>
                     <Text style={[styles.transactionBalance, { color: textSecondary }]}>
-                      Bal: {formatMoney(tx.balance)}
+                      Bal: {formatMoney(Math.abs(tx.balance))}
                     </Text>
                   </View>
                 </View>

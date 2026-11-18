@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -76,7 +75,6 @@ const DashboardScreen = () => {
         const token = accessToken || await getValidAccessToken();
         if (token) {
           const decoded = jwtDecode<any>(token);
-          console.log('Decoded JWT:', decoded);
           const name = decoded.name || decoded.preferred_username || decoded.given_name || 'Member';
           setUserName(name);
           void registerDeviceTokenWithBackend();
