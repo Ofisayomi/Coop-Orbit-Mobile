@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useToast } from '@/context/ToastContext';
 import { useAppLock } from '@/context/AuthLockContext';
 import { AuthError, getValidAccessToken, logout } from '@/services/authService';
-import { clearAppPin, getAppPinLength, verifyAppPin, type PinLength } from '@/services/app-pin';
+import { clearAppPin, getAppPinLength, verifyAppPin } from '@/services/app-pin';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const MAX_PIN_ATTEMPTS = 5;
@@ -31,7 +31,7 @@ export default function LockScreenModal() {
   const { unlock } = useAppLock();
 
   const [mode, setMode] = useState<LockMode>('checking');
-  const [pinLength, setPinLength] = useState<PinLength>(4);
+  const [pinLength, setPinLength] = useState<number>(4);
   const [entry, setEntry] = useState('');
   const [attemptsLeft, setAttemptsLeft] = useState(MAX_PIN_ATTEMPTS);
   const [error, setError] = useState<string | null>(null);

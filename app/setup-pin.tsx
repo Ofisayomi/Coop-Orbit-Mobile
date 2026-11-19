@@ -10,9 +10,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/context/ToastContext';
-import { setAppPin, type PinLength } from '@/services/app-pin';
-import { consumePendingNotificationRoute } from '@/services/expo-notification';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { APP_PIN_LENGTH, setAppPin } from '@/services/app-pin';
+import { consumePendingNotificationRoute } from '@/services/expo-notification';
 
 /**
  * First-login App PIN setup. Runs once per install (right after a full
@@ -25,7 +25,7 @@ export default function SetupPinScreen() {
   const isDark = colorScheme === 'dark';
   const { showToast } = useToast();
 
-  const [length, setLength] = useState<PinLength>(4);
+  const length = APP_PIN_LENGTH;
   const [entry, setEntry] = useState('');
   const [confirm, setConfirm] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -41,7 +41,7 @@ export default function SetupPinScreen() {
   const finishSetup = async () => {
     setIsSaving(true);
     try {
-      await setAppPin(confirm, length);
+      await setAppPin(confirm);
       showToast('App PIN set. You can unlock quickly with it from now on.', 'success');
       const pending = await consumePendingNotificationRoute();
       if (pending) {
@@ -84,14 +84,6 @@ export default function SetupPinScreen() {
     }
   };
 
-  const switchLength = (next: PinLength) => {
-    if (isSaving) return;
-    setLength(next);
-    setEntry('');
-    setConfirm('');
-    setConfirming(false);
-  };
-
   const current = confirming ? confirm : entry;
   const dots = Array.from({ length }, (_, i) => i < current.length);
 
@@ -109,23 +101,7 @@ export default function SetupPinScreen() {
             : 'Quick unlock for this device — used whenever fingerprint is unavailable'}
         </Text>
 
-        <View style={styles.lengthRow}>
-          {([4, 6] as PinLength[]).map((option) => (
-            <TouchableOpacity
-              key={option}
-              style={[
-                styles.lengthChip,
-                { borderColor: primary, backgroundColor: length === option ? primary : 'transparent' },
-              ]}
-              onPress={() => switchLength(option)}
-              disabled={isSaving}
-            >
-              <Text style={[styles.lengthText, { color: length === option ? '#FFFFFF' : primary }]}>
-                {option}-digit
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <Text style={[styles.subtitle, { color: textSecondary }]}>4 digits</Text>
 
         <View style={styles.dotsRow}>
           {dots.map((filled, i) => (
@@ -206,21 +182,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 6,
     textAlign: 'center',
-  },
-  lengthRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  lengthChip: {
-    borderWidth: 1.5,
-    borderRadius: 16,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-  },
-  lengthText: {
-    fontSize: 14,
-    fontWeight: '700',
   },
   dotsRow: {
     flexDirection: 'row',
