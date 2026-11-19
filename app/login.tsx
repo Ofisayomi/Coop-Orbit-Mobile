@@ -3,6 +3,7 @@ import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -486,6 +487,25 @@ const LoginScreen = () => {
               <Text style={styles.signInButtonText}>Sign In</Text>
             )}
           </TouchableOpacity>
+
+          <View style={styles.legalNoticeContainer}>
+            <Text style={[styles.legalNoticeText, { color: colorScheme === 'dark' ? '#A0AEC0' : '#718096' }]}>
+              By continuing, you agree to Coop Orbit's{' '}
+              <Text
+                style={[styles.legalNoticeLink, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}
+                onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/terms')}
+              >
+                Terms of Service
+              </Text>{' '}
+              and{' '}
+              <Text
+                style={[styles.legalNoticeLink, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}
+                onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/privacy')}
+              >
+                Privacy Policy
+              </Text>.
+            </Text>
+          </View>
         </View>
 
         {/* Integrated WebView Modal */}
@@ -662,5 +682,19 @@ const styles = StyleSheet.create({
     left: '50%',
     marginLeft: -12,
     marginTop: -12,
-  }
+  },
+  legalNoticeContainer: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  legalNoticeText: {
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  legalNoticeLink: {
+    fontWeight: 'bold',
+    textDecorationLine: 'underline',
+  },
 });

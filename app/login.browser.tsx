@@ -499,6 +499,25 @@ const LoginScreen = () => {
             )}
           </TouchableOpacity>
 
+          <View style={styles.legalNoticeContainer}>
+            <Text style={[styles.legalNoticeText, { color: colorScheme === 'dark' ? '#A0AEC0' : '#718096' }]}>
+              By continuing, you agree to Coop Orbit's{' '}
+              <Text
+                style={[styles.legalNoticeLink, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}
+                onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/terms')}
+              >
+                Terms of Service
+              </Text>{' '}
+              and{' '}
+              <Text
+                style={[styles.legalNoticeLink, { color: colorScheme === 'dark' ? '#90CDF4' : '#173581' }]}
+                onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/privacy')}
+              >
+                Privacy Policy
+              </Text>.
+            </Text>
+          </View>
+
           {/* <View style={styles.footer}>
             <Text style={styles.footerText}>
               Don't have an account? <Text style={styles.createAccount}>Create Account</Text>
@@ -668,5 +687,19 @@ const styles = StyleSheet.create({
   createAccount: {
     color: '#1A202C',
     fontWeight: 'bold',
+  },
+  legalNoticeContainer: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  legalNoticeText: {
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  legalNoticeLink: {
+    fontWeight: 'bold',
+    textDecorationLine: 'underline',
   },
 });

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
@@ -342,6 +343,46 @@ export default function SettingsScreen() {
                             </View>
                         </View>
                         <Ionicons name="chevron-forward" size={20} color={getSubTextColor()} />
+                    </TouchableOpacity>
+                </View>
+
+                {/* Legal & About Section */}
+                <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Legal & About</Text>
+                <View style={[styles.card, { backgroundColor: getCardColor() }]}>
+                    <TouchableOpacity
+                        style={[styles.settingRow, { borderBottomColor: getBorderColor(), borderBottomWidth: 1 }]}
+                        onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/privacy')}
+                    >
+                        <View style={styles.settingInfo}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
+                                <Ionicons name="shield-checkmark-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
+                            </View>
+                            <View style={styles.textContainer}>
+                                <Text style={[styles.settingTitle, { color: getTextColor() }]}>Privacy Policy</Text>
+                                <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                    Read how Coop Orbit protects your data
+                                </Text>
+                            </View>
+                        </View>
+                        <Ionicons name="open-outline" size={20} color={getSubTextColor()} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.settingRow}
+                        onPress={() => WebBrowser.openBrowserAsync('https://cooporbit.com/terms')}
+                    >
+                        <View style={styles.settingInfo}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
+                                <Ionicons name="document-text-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
+                            </View>
+                            <View style={styles.textContainer}>
+                                <Text style={[styles.settingTitle, { color: getTextColor() }]}>Terms of Service</Text>
+                                <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                    Review platform terms and user guidelines
+                                </Text>
+                            </View>
+                        </View>
+                        <Ionicons name="open-outline" size={20} color={getSubTextColor()} />
                     </TouchableOpacity>
                 </View>
 
