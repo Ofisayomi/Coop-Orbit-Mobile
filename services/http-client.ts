@@ -35,8 +35,11 @@ class ApiClient {
                 // Transient: keep the session, let the caller show a retry UI.
                 throw error;
             }
-            // Dead session or misconfigured build - logout and redirect to login
-            console.error('Failed to get valid access token, redirecting to login:', error);
+            // Dead session or misconfigured build - logout and redirect to login.
+            // Expected flow (the user is told via toast + redirect), so log
+            // without an error overlay: console.error would pop a redbox
+            // pointing at the AuthError constructor on every expired session.
+            console.log('Session expired, redirecting to login.');
             const message = error instanceof AuthError ? error.message : 'Session expired. Please sign in with your credentials.';
             await this.handleAuthFailure(message);
             throw error instanceof AuthError ? error : new AuthError('no-session', message);

@@ -267,9 +267,9 @@ export async function logout(): Promise<void> {
                 );
             }
         }
-    } catch (error) {
-        console.error('Error during Keycloak logout:', error);
-        // Continue clearing local tokens even if server request fails
+    } catch {
+        // Best-effort server call (often just offline) - never an error overlay.
+        console.log('Keycloak logout call failed, continuing local logout.');
     } finally {
         // Always clear local tokens
         await SecureStore.deleteItemAsync('access_token');

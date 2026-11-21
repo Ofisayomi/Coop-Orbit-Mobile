@@ -333,8 +333,9 @@ export async function registerDeviceTokenWithBackend(): Promise<boolean> {
         });
         console.log('[Push] Successfully registered push token with backend.');
         return true;
-    } catch (error) {
-        console.error('[Push] Error registering device push token:', error);
+    } catch {
+        // Fire-and-forget registration (often just offline) - log without an overlay.
+        console.log('[Push] Device registration skipped for now.');
         return false;
     }
 }
