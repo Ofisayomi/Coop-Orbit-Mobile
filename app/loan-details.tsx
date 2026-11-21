@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/context/ToastContext';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/hooks/use-app-palette';
 import {
   AccountService,
   type LoanDetailDto,
@@ -41,8 +41,7 @@ interface NextStepItem {
 export default function LoanDetailsScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { isDark, colors, common } = useAppPalette();
 
   const params = useLocalSearchParams<{
     id?: string;
@@ -70,14 +69,14 @@ export default function LoanDetailsScreen() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
 
-  // Theme colors
-  const bg = isDark ? '#121212' : '#F8F9FB';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
-  const textSecondary = isDark ? '#A0AEC0' : '#718096';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
-  const borderColor = isDark ? '#2D3748' : '#E2E8F0';
-  const primary = '#173581';
+  // Theme colors (centralized in constants/app-theme.ts via useAppPalette)
+  const bg = colors.bg;
+  const textPrimary = colors.text;
+  const textSecondary = colors.muted;
+  const cardBg = colors.card;
+  const inputBg = colors.input;
+  const borderColor = colors.border;
+  const primary = colors.primary;
 
   const fetchDetails = React.useCallback(async () => {
     if (!loanId) {
@@ -501,11 +500,11 @@ export default function LoanDetailsScreen() {
 
                     {isPending && (
                       <TouchableOpacity
-                        style={[styles.remindButton, { borderColor: primary }]}
+                        style={common.outlineButton}
                         onPress={() => handleRemindGuarantor(guarantor.guarantorName)}
                       >
                         <Ionicons name="notifications-outline" size={12} color={primary} />
-                        <Text style={[styles.remindButtonText, { color: primary }]}>Remind</Text>
+                        <Text style={common.outlineButtonText}>Remind</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -983,19 +982,6 @@ const styles = StyleSheet.create({
   guarantorRight: {
     alignItems: 'flex-end',
     gap: 6,
-  },
-  remindButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  remindButtonText: {
-    fontSize: 10,
-    fontWeight: '700',
   },
   detailBox: {
     borderWidth: 1,

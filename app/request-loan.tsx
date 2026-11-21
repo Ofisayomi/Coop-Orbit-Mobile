@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -15,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/context/ToastContext';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/hooks/use-app-palette';
 import { AccountService, type LoanProductDto } from '@/services/accountService';
 
 interface Guarantor {
@@ -71,8 +72,7 @@ const FloatingDropdown = ({ options, onSelect, selectedValue, placeholder, isOpe
 const RequestLoanScreen = () => {
   const router = useRouter();
   const { showToast } = useToast();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { isDark, colors, common } = useAppPalette();
 
   const [loanType, setLoanType] = useState<string>('');
   const [amount, setAmount] = useState('');
@@ -90,16 +90,18 @@ const RequestLoanScreen = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoadingGuarantors, setIsLoadingGuarantors] = useState(false);
   const [guarantorError, setGuarantorError] = useState<string | null>(null);
+  const [showFeeConsent, setShowFeeConsent] = useState(false);
+  const [feeAccepted, setFeeAccepted] = useState(false);
   const repaymentDuration = [12]; // in months
 
-  // Theme colors
-  const bg = isDark ? '#121212' : '#F8F9FB';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
-  const textSecondary = isDark ? '#A0AEC0' : '#718096';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
-  const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
-  const primary = '#173581';
+  // Theme colors (centralized in constants/app-theme.ts via useAppPalette)
+  const bg = colors.bg;
+  const textPrimary = colors.text;
+  const textSecondary = colors.muted;
+  const cardBg = colors.card;
+  const inputBg = colors.input;
+  const inputBorder = colors.border;
+  const primary = colors.primary;
 
   const loanTypes = loanProducts.map((product) => product.loanName);
   const repaymentSources = ['Bank Transfer', 'Mobile Money', 'Cash'];
@@ -188,7 +190,7 @@ const RequestLoanScreen = () => {
     g.name.toLowerCase().includes(searchGuarantors.toLowerCase())
   );
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     const requestedAmount = Number(amount);
     const requiredGuarantors = selectedLoanProduct?.guarantorCount ?? 0;
     if (!selectedLoanProduct || !Number.isFinite(requestedAmount) || requestedAmount <= 0 || !purpose.trim()) {
@@ -204,6 +206,16 @@ const RequestLoanScreen = () => {
       return;
     }
 
+    // Validation passed: force the non-refundable processing-fee consent step.
+    setFeeAccepted(false);
+    setShowFeeConsent(true);
+  };
+
+  const submitLoanRequest = async () => {
+    if (!selectedLoanProduct) return;
+    const requestedAmount = Number(amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) return;
+    setShowFeeConsent(false);
     setIsSubmitting(true);
     try {
       const message = await AccountService.requestLoan({
@@ -252,7 +264,7 @@ const RequestLoanScreen = () => {
           {/* Section 1: Loan Details */}
           <View style={[styles.section, { backgroundColor: cardBg, marginBottom: 24, zIndex: 2000 }]}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionNumberBadge, { backgroundColor: primary }]}>1</Text>
+              <View style={common.sectionBadge}><Text style={common.sectionBadgeText}>1</Text></View>
               <Text style={[styles.sectionTitle, { color: primary }]}>Loan Details</Text>
             </View>
 
@@ -316,7 +328,7 @@ const RequestLoanScreen = () => {
           {/* Section 2: Repayment Plan */}
           <View style={[styles.section, { backgroundColor: cardBg, marginBottom: 24, zIndex: 1000 }]}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionNumberBadge, { backgroundColor: primary }]}>2</Text>
+              <View style={common.sectionBadge}><Text style={common.sectionBadgeText}>2</Text></View>
               <Text style={[styles.sectionTitle, { color: primary }]}>Repayment Plan</Text>
             </View>
 
@@ -408,7 +420,7 @@ const RequestLoanScreen = () => {
           {/* Section 3: Guarantors */}
           <View style={[styles.section, { backgroundColor: cardBg, marginBottom: 24 }]}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionNumberBadge, { backgroundColor: primary }]}>3</Text>
+              <View style={common.sectionBadge}><Text style={common.sectionBadgeText}>3</Text></View>
               <Text style={[styles.sectionTitle, { color: primary }]}>Guarantors</Text>
             </View>
 
@@ -452,7 +464,7 @@ const RequestLoanScreen = () => {
                     >
                       <View style={styles.guarantorInfo}>
                         <View style={[styles.avatarCircle, { backgroundColor: primary }]}>
-                          <Text style={styles.avatarText}>{guarantor.avatar}</Text>
+                          <Text style={[styles.avatarText, { color: colors.onPrimary }]}>{guarantor.avatar}</Text>
                         </View>
                         <View style={styles.guarantorDetails}>
                           <Text style={[styles.guarantorName, { color: textPrimary }]}>{guarantor.name}</Text>
@@ -493,12 +505,62 @@ const RequestLoanScreen = () => {
           </View>
 
           {/* Submit Button */}
-          <TouchableOpacity disabled={isLoading || isSubmitting} style={[styles.submitButton, { backgroundColor: primary }, (isLoading || isSubmitting) && styles.submitButtonDisabled]} onPress={() => void handleSubmit()}>
+          <TouchableOpacity disabled={isLoading || isSubmitting} style={[styles.submitButton, { backgroundColor: primary }, (isLoading || isSubmitting) && styles.submitButtonDisabled]} onPress={handleSubmit}>
             <Text style={styles.submitButtonText}>{isSubmitting ? 'Submitting…' : 'Submit Application'}</Text>
             {!isSubmitting && <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Processing-fee consent: required checkbox before the loan request is sent */}
+      <Modal visible={showFeeConsent} transparent animationType="fade" onRequestClose={() => setShowFeeConsent(false)}>
+        <View style={styles.consentOverlay}>
+          <View style={[styles.consentCard, { backgroundColor: cardBg }]}>
+            <View style={[styles.consentIcon, { backgroundColor: isDark ? '#2D3748' : '#EFF6FF' }]}>
+              <Ionicons name="receipt-outline" size={28} color={primary} />
+            </View>
+            <Text style={[styles.consentTitle, { color: textPrimary }]}>Processing Fee Consent</Text>
+            <Text style={[styles.consentBody, { color: textSecondary }]}>
+              This {selectedLoanProduct?.loanName ?? 'loan'} application carries a processing (admin) fee of{' '}
+              <Text style={[styles.consentAmount, { color: textPrimary }]}>
+                {new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 }).format(selectedLoanProduct?.processingFee ?? 0)}
+              </Text>
+              . The fee is non-refundable once your application is submitted, whether or not the loan is approved.
+            </Text>
+            <TouchableOpacity
+              style={styles.consentCheckRow}
+              activeOpacity={0.7}
+              onPress={() => setFeeAccepted((prev) => !prev)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: feeAccepted }}
+            >
+              <View style={[styles.consentCheckbox, { borderColor: feeAccepted ? primary : inputBorder, backgroundColor: feeAccepted ? primary : 'transparent' }]}>
+                {feeAccepted && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
+              </View>
+              <Text style={[styles.consentCheckText, { color: textPrimary }]}>
+                I understand and accept the non-refundable processing fee.
+              </Text>
+            </TouchableOpacity>
+            <View style={styles.consentButtons}>
+              <TouchableOpacity
+                style={[styles.consentButton, styles.consentCancel, { borderColor: inputBorder }]}
+                onPress={() => setShowFeeConsent(false)}
+              >
+                <Text style={[styles.consentCancelText, { color: textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.consentButton, { backgroundColor: primary }, !feeAccepted && styles.submitButtonDisabled]}
+                disabled={!feeAccepted || isSubmitting}
+                onPress={() => void submitLoanRequest()}
+              >
+                {isSubmitting
+                  ? <ActivityIndicator color="#FFFFFF" />
+                  : <Text style={styles.submitButtonText}>Confirm & Submit</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -540,14 +602,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
-  },
-  sectionNumberBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
   },
   sectionTitle: {
     fontSize: 16,
@@ -703,7 +757,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatarText: {
-    color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 16,
   },
@@ -789,5 +842,82 @@ const styles = StyleSheet.create({
   calcTotalValue: {
     fontSize: 15,
     fontWeight: '800',
+  },
+  consentOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  consentCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+  },
+  consentIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  consentTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  consentBody: {
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  consentAmount: {
+    fontWeight: '800',
+  },
+  consentCheckRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 20,
+  },
+  consentCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  consentCheckText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 19,
+  },
+  consentButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
+  consentButton: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  consentCancel: {
+    borderWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  consentCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/hooks/use-app-palette';
 import { useToast } from '@/context/ToastContext';
 import { AccountService } from '@/services/accountService';
 import { getCurrentUserRoles } from '@/services/authService';
@@ -116,8 +116,7 @@ function validateForm(form: MemberForm): string | null {
 
 const AddMemberScreen = () => {
   const router = useRouter();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { colors, common } = useAppPalette();
   const { showToast } = useToast();
 
   const [form, setForm] = useState<MemberForm>(initialForm());
@@ -174,15 +173,15 @@ const AddMemberScreen = () => {
     };
   }, [scrollFieldIntoView]);
 
-  // Theme colors
-  const bg = isDark ? '#121212' : '#F8F9FB';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
-  const textSecondary = isDark ? '#A0AEC0' : '#718096';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
-  const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
-  const tableBorder = isDark ? '#2D3748' : '#F7FAFC';
-  const primary = '#173581';
+  // Theme colors (centralized in constants/app-theme.ts via useAppPalette)
+  const bg = colors.bg;
+  const textPrimary = colors.text;
+  const textSecondary = colors.muted;
+  const cardBg = colors.card;
+  const inputBg = colors.input;
+  const inputBorder = colors.border;
+  const tableBorder = colors.border;
+  const primary = colors.primary;
 
   useEffect(() => {
     void getCurrentUserRoles()
@@ -384,7 +383,7 @@ const AddMemberScreen = () => {
                   )}
                   <View style={{ flex: 1, gap: 8 }}>
                     <TouchableOpacity
-                      style={[styles.photoButton, { backgroundColor: inputBg, borderColor: inputBorder }]}
+                      style={common.uploadButton}
                       onPress={() => void handlePickPhoto()}
                       disabled={isPickingPhoto || isSubmitting}
                     >
@@ -393,7 +392,7 @@ const AddMemberScreen = () => {
                       ) : (
                         <>
                           <Ionicons name="cloud-upload-outline" size={18} color={primary} />
-                          <Text style={[styles.photoButtonText, { color: primary }]}>
+                          <Text style={common.uploadButtonText}>
                             {profilePhoto ? 'Change Photo' : 'Upload Photo'}
                           </Text>
                         </>
@@ -580,19 +579,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  photoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    gap: 6,
-  },
-  photoButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
   photoRemove: {
     alignSelf: 'flex-start',

@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/context/ToastContext';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/hooks/use-app-palette';
 import { AccountService, type AccountDto, type UserSearchDto } from '@/services/accountService';
 import { AuthError, getValidAccessToken, withExternalActivity } from '@/services/authService';
 
@@ -37,8 +37,7 @@ const DEFAULT_ACCOUNTS: AccountDto[] = [
 
 export default function SplitPaymentScreen() {
   const router = useRouter();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { isDark, colors, common } = useAppPalette();
 
   // Role & Token State
   const [canSelectBeneficiary, setCanSelectBeneficiary] = useState(false);
@@ -61,15 +60,15 @@ export default function SplitPaymentScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const toast = useToast();
 
-  // Theme Colors
-  const bg = isDark ? '#121212' : '#F8F9FB';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
-  const textSecondary = isDark ? '#A0AEC0' : '#4A5568';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
-  const borderColor = isDark ? '#2D3748' : '#E2E8F0';
-  const primary = isDark ? '#fafafa69' : '#173581';
-  const warningColor = isDark ? '#FFA500' : '#FF8C00';
+  // Theme colors (centralized in constants/app-theme.ts via useAppPalette)
+  const bg = colors.bg;
+  const cardBg = colors.card;
+  const textPrimary = colors.text;
+  const textSecondary = colors.muted;
+  const inputBg = colors.input;
+  const borderColor = colors.border;
+  const primary = colors.primary;
+  const warningColor = colors.warning;
 
   // Derived Calculations
   const totalTransfer = parseFloat(totalTransferStr.replace(/,/g, '')) || 0;
@@ -533,9 +532,9 @@ export default function SplitPaymentScreen() {
                 </View>
               )}
 
-              <TouchableOpacity style={[styles.uploadButton, { borderColor }]} onPress={handleDocumentPick}>
+              <TouchableOpacity style={common.uploadButton} onPress={handleDocumentPick}>
                 <Ionicons name="cloud-upload-outline" size={22} color={primary} />
-                <Text style={[styles.uploadText, { color: primary }]}>Select PDF or Image</Text>
+                <Text style={common.uploadButtonText}>Select PDF or Image</Text>
               </TouchableOpacity>
             </View>
 
@@ -855,20 +854,6 @@ const styles = StyleSheet.create({
   attachmentName: {
     flex: 1,
     fontSize: 12,
-  },
-  uploadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    paddingVertical: 14,
-    gap: 8,
-  },
-  uploadText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
   submitButton: {
     paddingVertical: 14,

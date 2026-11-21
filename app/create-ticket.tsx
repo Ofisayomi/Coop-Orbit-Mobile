@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/hooks/use-app-palette';
 import { useToast } from '@/context/ToastContext';
 import { withExternalActivity } from '@/services/authService';
 import {
@@ -56,8 +56,7 @@ function readFileAsDataUrl(uri: string, mimeType: string): Promise<string> {
 
 const CreateTicketScreen = () => {
   const router = useRouter();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { colors, common } = useAppPalette();
   const { showToast } = useToast();
   const params = useLocalSearchParams<{ subject?: string; category?: string }>();
 
@@ -70,14 +69,14 @@ const CreateTicketScreen = () => {
   const [isAttaching, setIsAttaching] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Theme colors
-  const bg = isDark ? '#121212' : '#F8F9FB';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A202C';
-  const textSecondary = isDark ? '#A0AEC0' : '#718096';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const inputBg = isDark ? '#2D3748' : '#F7FAFC';
-  const inputBorder = isDark ? '#4A5568' : '#E2E8F0';
-  const primary = '#173581';
+  // Theme colors (centralized in constants/app-theme.ts via useAppPalette)
+  const bg = colors.bg;
+  const textPrimary = colors.text;
+  const textSecondary = colors.muted;
+  const cardBg = colors.card;
+  const inputBg = colors.input;
+  const inputBorder = colors.border;
+  const primary = colors.primary;
 
   const handlePickAttachment = async () => {
     try {
@@ -217,7 +216,7 @@ const CreateTicketScreen = () => {
             </View>
           ) : (
             <TouchableOpacity
-              style={[styles.uploadButton, { borderColor: inputBorder }]}
+              style={common.uploadButton}
               onPress={() => void handlePickAttachment()}
               disabled={isAttaching}
             >
@@ -226,7 +225,7 @@ const CreateTicketScreen = () => {
               ) : (
                 <>
                   <Ionicons name="cloud-upload-outline" size={22} color={primary} />
-                  <Text style={[styles.uploadText, { color: primary }]}>Select PDF or Image (max 2MB)</Text>
+                  <Text style={common.uploadButtonText}>Select PDF or Image (max 2MB)</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -313,20 +312,6 @@ const styles = StyleSheet.create({
   attachmentName: {
     flex: 1,
     fontSize: 13,
-  },
-  uploadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    paddingVertical: 16,
-    gap: 8,
-  },
-  uploadText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
   submitButton: {
     flexDirection: 'row',

@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import MemberAvatar from '@/components/member-avatar';
 import {
   AccountService,
   type MemberDto,
@@ -229,11 +230,11 @@ const MembersScreen = () => {
                 ]}
               >
                 <View style={styles.memberLeft}>
-                  <View style={[styles.avatarCircle, { backgroundColor: primary }]}>
-                    <Text style={styles.avatarText}>
-                      {memberDisplayName(member).charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
+                  <MemberAvatar
+                    profilePictureUrl={member.profilePictureUrl}
+                    displayName={memberDisplayName(member)}
+                    backgroundColor={primary}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.memberNameText, { color: textPrimary }]} numberOfLines={1}>
                       {memberDisplayName(member)}
@@ -402,18 +403,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
   },
   memberNameText: {
     fontSize: 13,

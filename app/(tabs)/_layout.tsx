@@ -38,12 +38,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="guarantor-requests"
-        options={{
-          href: null, // This hides the tab from the bar
-        }}
-      />
-      <Tabs.Screen
         name="explore"
         options={{
           href: null, // This hides the tab from the bar

@@ -1,5 +1,87 @@
 import { apiClient } from './http-client';
 
+export interface AccountTypeDto {
+  id: string;
+  name: string;
+  accountCategory: string;
+}
+
+export interface CreateLoanAccountPayload {
+  name: string;
+  description: string;
+  loanTypeId: string;
+  interestRate: number;
+  interestFrequency: number;
+  maxGuarantors: number;
+  processingFee: number;
+  maxRepaymentDuration: number;
+  /** 1 = Fixed, 2 = Reducing */
+  interestType: number;
+  /** 1 = Upfront, 2 = Distributed, 3 = Deducted */
+  interestStrategy: number;
+  requiredAmount?: number;
+  linkedAmountAccount?: string;
+  linkedPercentageAccount?: string;
+  requiredPercentage?: number;
+  singleLoanConstraint: boolean;
+  beneficiaries: string[];
+  guarantorConstraint: boolean;
+  repaymentThreshold: number;
+  selectedGuarantorRoles: string[];
+}
+
+export interface CreateSavingsAccountPayload {
+  name: string;
+  description: string;
+  beneficiaries: string[];
+  accountTypeId: string;
+  interestRate: number;
+}
+
+export interface AccountDetailDto {
+  id: string;
+  accountName: string;
+  accountDescription: string;
+  accountTypeId: string;
+  accountCategory: string;
+  interestRate: number;
+  interestType: number;
+  interestFrequency: number;
+  interestStrategy: number;
+  processingFee: number;
+  guarantorCount: number;
+  linkedPercentageAccount?: string | null;
+  linkedAmountAccount?: string | null;
+  requiredPercentage: number;
+  requiredAmount: number;
+  singleLoanConstraint: boolean;
+  beneficiaries: string[];
+  guarantorConstraint: boolean;
+  repaymentThreshold: number;
+  selectedGuarantorRoles: string[];
+  isActive: boolean;
+}
+
+export interface UpdateAccountPayload {
+  name: string;
+  description: string;
+  interestRate: number;
+  interestFrequency: number;
+  interestStrategy: number;
+  processingFee: number;
+  guarantorCount: number;
+  maxRepaymentDuration: number;
+  requiredAmount: number;
+  linkedAmountAccount?: string;
+  linkedPercentageAccount?: string;
+  requiredPercentage: number;
+  singleLoanConstraint: boolean;
+  beneficiaries: string[];
+  guarantorConstraint: boolean;
+  repaymentThreshold: number;
+  selectedGuarantorRoles: string[];
+}
+
 export interface AccountDto {
   id: string;
   accountType: string;
@@ -198,9 +280,12 @@ export interface OrganizationDto {
 }
 
 export const AccountService = {
-  async getAccounts(memberId?: string): Promise<AccountDto[]> {
-    const query = memberId ? `?memberId=${encodeURIComponent(memberId)}` : '';
-    return readJson<AccountDto[]>(await apiClient.get(`/accounts${query}`));
+  async getAccounts(memberId?: string, includeAll?: boolean): Promise<AccountDto[]> {
+    const query = new URLSearchParams();
+    if (memberId) query.set('memberId', memberId);
+    if (includeAll) query.set('includeAll', 'true');
+    const suffix = query.toString();
+    return readJson<AccountDto[]>(await apiClient.get(`/accounts${suffix ? `?${suffix}` : ''}`));
   },
 
   async getPaymentAccounts(memberId?: string): Promise<AccountDto[]> {
@@ -426,5 +511,53 @@ export const AccountService = {
     const response = await apiClient.get(`/organizations`);
     if (response.status === 404) return null;
     return readJson<OrganizationDto>(response);
-  }
+  },
+
+  async getAccountTypes(): Promise<AccountTypeDto[]> {
+    return readJson<AccountTypeDto[]>(await apiClient.get('/accounts/types'));
+  },
+
+  async createLoanAccount(payload: CreateLoanAccountPayload): Promise<string> {
+    const response = await apiClient.post('/accounts/loan', {
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to create loan account');
+    return response.text();
+  },
+
+  async createSavingsAccount(payload: CreateSavingsAccountPayload): Promise<string> {
+    const response = await apiClient.post('/accounts/savings', {
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to create savings account');
+    return response.text();
+  },
+
+  async getAccountDetail(id: string): Promise<AccountDetailDto> {
+    const response = await apiClient.get(`/accounts/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to load account details');
+    return response.json() as Promise<AccountDetailDto>;
+  },
+
+  async updateAccount(id: string, payload: UpdateAccountPayload): Promise<string> {
+    const response = await apiClient.put(`/accounts/${encodeURIComponent(id)}`, {
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to update account');
+    return response.text();
+  },
+
+  async deleteAccount(id: string): Promise<string> {
+    const response = await apiClient.delete(`/accounts/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to delete account');
+    return response.text();
+  },
+
+  async setAccountStatus(id: string, isActive: boolean): Promise<string> {
+    const response = await apiClient.patch(`/accounts/status/${encodeURIComponent(id)}`, {
+      body: JSON.stringify({ isActive }),
+    });
+    if (!response.ok) throw new Error((await response.text()) || 'Unable to update account status');
+    return response.text();
+  },
 };

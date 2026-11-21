@@ -41,6 +41,9 @@ function RootLayoutNav() {
         <Stack.Screen name="members" options={{ headerShown: false }} />
         <Stack.Screen name="member-details" options={{ headerShown: false }} />
         <Stack.Screen name="add-member" options={{ headerShown: false }} />
+        <Stack.Screen name="configure-accounts" options={{ headerShown: false }} />
+        <Stack.Screen name="manage-accounts" options={{ headerShown: false }} />
+        <Stack.Screen name="edit-account" options={{ headerShown: false }} />
         <Stack.Screen name="support-tickets" options={{ headerShown: false }} />
         <Stack.Screen name="create-ticket" options={{ headerShown: false }} />
         <Stack.Screen name="ticket-detail" options={{ headerShown: false }} />

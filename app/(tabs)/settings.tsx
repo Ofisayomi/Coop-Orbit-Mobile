@@ -34,14 +34,22 @@ export default function SettingsScreen() {
     const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(false);
     const [isNotificationsLoading, setIsNotificationsLoading] = useState(true);
     const [isSupportAdmin, setIsSupportAdmin] = useState(false);
+    const [canConfigureAccounts, setCanConfigureAccounts] = useState(false);
 
     useEffect(() => {
         checkBiometricSupport();
         loadSettings();
         void loadNotificationStatus();
         void getCurrentUserRoles()
-            .then((roles) => setIsSupportAdmin(roles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role))))
-            .catch(() => setIsSupportAdmin(false));
+            .then((roles) => {
+                const privileged = roles.some((role) => PRIVILEGED_MEMBER_ROLES.includes(role));
+                setIsSupportAdmin(privileged);
+                setCanConfigureAccounts(privileged);
+            })
+            .catch(() => {
+                setIsSupportAdmin(false);
+                setCanConfigureAccounts(false);
+            });
     }, []);
 
     const checkBiometricSupport = async () => {
@@ -312,6 +320,49 @@ export default function SettingsScreen() {
                         />
                     </View>
                 </View>
+
+                {/* Administration Section (privileged roles only) */}
+                {canConfigureAccounts ? (
+                    <>
+                        <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Administration</Text>
+                        <View style={[styles.card, { backgroundColor: getCardColor() }]}>
+                            <TouchableOpacity
+                                style={[styles.settingRow, { borderBottomColor: getBorderColor(), borderBottomWidth: 1 }]}
+                                onPress={() => router.push('/manage-accounts')}
+                            >
+                                <View style={styles.settingInfo}>
+                                    <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
+                                        <Ionicons name="wallet-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
+                                    </View>
+                                    <View style={styles.textContainer}>
+                                        <Text style={[styles.settingTitle, { color: getTextColor() }]}>Manage Accounts</Text>
+                                        <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                            View, edit, activate, or delete accounts
+                                        </Text>
+                                    </View>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color={getSubTextColor()} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.settingRow}
+                                onPress={() => router.push('/configure-accounts')}
+                            >
+                                <View style={styles.settingInfo}>
+                                    <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2D3748' : '#EBF8FF' }]}>
+                                        <Ionicons name="business-outline" size={22} color={isDark ? '#90CDF4' : '#173581'} />
+                                    </View>
+                                    <View style={styles.textContainer}>
+                                        <Text style={[styles.settingTitle, { color: getTextColor() }]}>Configure Accounts</Text>
+                                        <Text style={[styles.settingDescription, { color: getSubTextColor() }]}>
+                                            Loan, savings, and engagement products with eligibility and guarantor rules
+                                        </Text>
+                                    </View>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color={getSubTextColor()} />
+                            </TouchableOpacity>
+                        </View>
+                    </>
+                ) : null}
 
                 {/* Support Section */}
                 <Text style={[styles.sectionTitle, { color: getSubTextColor(), marginTop: 24 }]}>Support</Text>

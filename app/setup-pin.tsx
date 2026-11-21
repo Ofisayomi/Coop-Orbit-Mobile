@@ -38,10 +38,10 @@ export default function SetupPinScreen() {
   const keyBg = isDark ? '#2D3748' : '#EDF2F7';
   const primary = '#173581';
 
-  const finishSetup = async () => {
+  const finishSetup = async (pin: string) => {
     setIsSaving(true);
     try {
-      await setAppPin(confirm);
+      await setAppPin(pin);
       showToast('App PIN set. You can unlock quickly with it from now on.', 'success');
       const pending = await consumePendingNotificationRoute();
       if (pending) {
@@ -70,7 +70,7 @@ export default function SetupPinScreen() {
           setConfirming(false);
           return;
         }
-        void finishSetup();
+        void finishSetup(next);
       }
     }
   };

@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
-import { getStoredTokens, getValidAccessToken } from './authService';
+import { getCurrentUserId, getStoredTokens, getValidAccessToken } from './authService';
 import { getOrCreateDeviceId } from './device';
 import { apiClient } from './http-client';
 
@@ -236,11 +236,51 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     }
 }
 
+const PUSH_REGISTRATION_KEY = 'push_registration';
+
+/** Last registration confirmed by the backend. Used to keep registration a one-time write. */
+interface PushRegistration {
+    pushToken: string;
+    deviceId: string;
+    userId: string;
+    /** Last known server opt-in state (register preserves it; Settings owns it). */
+    isEnabled: boolean;
+}
+
+async function readPushRegistration(): Promise<PushRegistration | null> {
+    try {
+        const raw = await SecureStore.getItemAsync(PUSH_REGISTRATION_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Partial<PushRegistration>;
+        if (!parsed.pushToken || !parsed.deviceId || !parsed.userId) return null;
+        return {
+            pushToken: parsed.pushToken,
+            deviceId: parsed.deviceId,
+            userId: parsed.userId,
+            isEnabled: parsed.isEnabled !== false,
+        };
+    } catch {
+        return null;
+    }
+}
+
+async function writePushRegistration(record: PushRegistration): Promise<void> {
+    try {
+        await SecureStore.setItemAsync(PUSH_REGISTRATION_KEY, JSON.stringify(record));
+    } catch (error) {
+        console.error('[Push] Error caching push registration:', error);
+    }
+}
+
 /**
  * Register device push token with the backend API for the currently authenticated user.
  * Runs after the first successful login (and as a safety net on dashboard mount):
  * the session is proven via the refresh flow, not the SecureStore access token,
  * which is intentionally never persisted there.
+ *
+ * Idempotent: once the current token/device/user triple is confirmed by the
+ * backend, repeat calls return without touching the network. A changed token
+ * (Expo rotation), device, or signed-in user re-registers exactly once.
  */
 export async function registerDeviceTokenWithBackend(): Promise<boolean> {
     try {
@@ -251,13 +291,26 @@ export async function registerDeviceTokenWithBackend(): Promise<boolean> {
             return false;
         }
 
-        const pushToken = await registerForPushNotificationsAsync();
+        const [pushToken, deviceId, userId] = await Promise.all([
+            registerForPushNotificationsAsync(),
+            getOrCreateDeviceId(),
+            getCurrentUserId(),
+        ]);
         if (!pushToken) {
             console.warn('[Push] Unable to obtain push token.');
             return false;
         }
+        if (!userId) {
+            console.log('[Push] Unable to resolve user, skipping device registration.');
+            return false;
+        }
 
-        const deviceId = await getOrCreateDeviceId();
+        const cached = await readPushRegistration();
+        if (cached && cached.pushToken === pushToken && cached.deviceId === deviceId && cached.userId === userId) {
+            console.log('[Push] Push token already registered, skipping duplicate registration.');
+            return true;
+        }
+
         console.log('[Push] Registering push token with backend:', { deviceId, pushToken });
 
         const response = await apiClient.post('/api/devices/register', {
@@ -272,6 +325,12 @@ export async function registerDeviceTokenWithBackend(): Promise<boolean> {
             return false;
         }
 
+        await writePushRegistration({
+            pushToken,
+            deviceId,
+            userId,
+            isEnabled: cached?.deviceId === deviceId ? cached.isEnabled : true,
+        });
         console.log('[Push] Successfully registered push token with backend.');
         return true;
     } catch (error) {
@@ -333,6 +392,17 @@ export async function setDeviceNotificationsEnabled(enabled: boolean): Promise<b
         if (!response.ok) {
             console.warn('[Push] Failed to update notification preference:', response.status);
             return false;
+        }
+
+        const userId = await getCurrentUserId();
+        const cached = await readPushRegistration();
+        if (userId) {
+            await writePushRegistration({
+                pushToken: pushToken ?? cached?.pushToken ?? '',
+                deviceId,
+                userId,
+                isEnabled: enabled,
+            });
         }
 
         return true;
